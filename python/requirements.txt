@@ -1,0 +1,2 @@
+# Development requirements for the worker wrapper.
+# pymss itself is used from E:/123/pymss during local development.

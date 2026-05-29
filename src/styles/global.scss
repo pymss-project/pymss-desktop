@@ -1,0 +1,344 @@
+/* ===== Theme Variables ===== */
+:root,
+.dark-theme {
+  --surface: #111318;
+  --surface-1: #181b21;
+  --surface-2: #20242b;
+  --surface-3: #292e37;
+  --on-surface: #eef1f6;
+  --on-surface-muted: #a8b0bd;
+  --outline: rgba(255, 255, 255, 0.10);
+  --primary: #7aa2ff;
+  --primary-strong: #9bb8ff;
+  --primary-soft: rgba(122, 162, 255, 0.14);
+  --success: #4caf7d;
+  --warning: #d6a33a;
+  --danger: #dc6675;
+  --shadow-soft: 0 18px 60px rgba(0, 0, 0, 0.22);
+}
+
+.light-theme {
+  --surface: #f7f8fb;
+  --surface-1: #ffffff;
+  --surface-2: #eef1f6;
+  --surface-3: #e5e9f0;
+  --on-surface: #171a1f;
+  --on-surface-muted: #667085;
+  --outline: rgba(17, 24, 39, 0.10);
+  --primary: #315fbd;
+  --primary-strong: #234a95;
+  --primary-soft: rgba(49, 95, 189, 0.10);
+  --success: #2e7d58;
+  --warning: #9a6b00;
+  --danger: #b4233a;
+  --shadow-soft: 0 18px 60px rgba(31, 41, 55, 0.10);
+}
+
+/* ===== Reset & Base ===== */
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+
+body {
+  font-family: MiSans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+button, input, select { font: inherit; }
+a { color: inherit; text-decoration: none; }
+
+/* ===== App Shell ===== */
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  background: var(--surface);
+  color: var(--on-surface);
+  overflow: hidden;
+  position: relative;
+}
+
+.app-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 14% 8%, var(--primary-soft), transparent 28%),
+    linear-gradient(180deg, rgba(255,255,255,.025), transparent 40%);
+}
+
+.app-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  height: 100%;
+  padding-top: 40px;
+}
+
+.app-content {
+  min-width: 0;
+  height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 24px 28px 32px;
+}
+.app-content::-webkit-scrollbar {
+  width: 6px;
+}
+.app-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-content::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 999px;
+}
+
+/* ===== Title Bar ===== */
+.title-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 40px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--outline);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(16px);
+  user-select: none;
+}
+
+.title-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 14px;
+  height: 100%;
+  min-width: 200px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: white;
+  background: linear-gradient(135deg, var(--primary), #a78bfa);
+}
+
+.brand-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.brand-copy strong { font-size: 13px; letter-spacing: .01em; }
+.brand-copy span { font-size: 11px; color: var(--on-surface-muted); }
+
+.title-drag-space {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+.window-actions {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 2;
+}
+.window-actions button {
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-muted);
+  -webkit-app-region: no-drag;
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  transition: 120ms ease;
+}
+.window-actions button:hover { background: var(--surface-2); color: var(--on-surface); }
+.window-actions button.danger:hover { background: var(--danger); color: white; }
+
+/* ===== Side Navigation ===== */
+.side-nav {
+  border-right: 1px solid var(--outline);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: color-mix(in srgb, var(--surface) 64%, transparent);
+}
+
+.nav-item {
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--on-surface-muted);
+  font-size: 10px;
+  transition: 160ms ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  position: relative;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--on-surface); }
+.nav-item.active { background: var(--primary-soft); color: var(--primary-strong); }
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+
+.nav-icon {
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+/* ===== Page Layout ===== */
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* ===== Page Transitions ===== */
+.page-enter-active, .page-leave-active { transition: 200ms cubic-bezier(.4,0,.2,1); }
+.page-enter-from, .page-leave-to { opacity: 0; transform: translateY(6px); }
+
+/* ===== Naive UI Overrides ===== */
+.dark-theme .n-card {
+  --n-border: 1px solid var(--outline);
+  --n-color: var(--surface-1);
+  --n-color-embedded: var(--surface-1);
+  --n-text-color: var(--on-surface);
+}
+.light-theme .n-card {
+  --n-border: 1px solid var(--outline);
+  --n-color: var(--surface-1);
+  --n-color-embedded: var(--surface-1);
+  --n-text-color: var(--on-surface);
+}
+
+.n-button {
+  --n-font: inherit;
+}
+
+/* ===== Utility Helpers ===== */
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.gap-sm { gap: 8px; }
+.gap-md { gap: 12px; }
+.gap-lg { gap: 16px; }
+.mt-sm { margin-top: 8px; }
+.mt-md { margin-top: 12px; }
+.mt-lg { margin-top: 16px; }
+.text-muted { color: var(--on-surface-muted); }
+.text-sm { font-size: 13px; }
+.w-full { width: 100%; }
+
+/* ===== Drop Zone (n-upload wrapper) ===== */
+.drop-wrapper {
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+  cursor: pointer;
+  transition: 180ms ease;
+}
+.drop-wrapper:hover {
+  border-color: var(--primary) !important;
+  background: color-mix(in srgb, var(--primary-soft) 50%, var(--surface-1)) !important;
+}
+.drop-icon-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--outline);
+  font-size: 24px;
+  color: var(--primary-strong);
+  margin-bottom: 16px;
+}
+.drop-wrapper h2 { margin: 0 0 6px; font-size: 18px; }
+.drop-wrapper p { margin: 0; color: var(--on-surface-muted); font-size: 13px; }
+
+/* ===== Page Header ===== */
+.page-header-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.page-header-compact h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.page-header-compact p {
+  margin: 4px 0 0;
+  color: var(--on-surface-muted);
+  font-size: 13px;
+}
+
+/* ===== Steps Workflow ===== */
+.steps-content {
+  margin-top: 24px;
+  min-height: 200px;
+}
+.step-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--outline);
+}
+
+/* ===== Task List ===== */
+.task-output-row {
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.task-output-row code {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--on-surface-muted);
+  font-size: 12px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 980px) {
+  .app-body { grid-template-columns: 1fr; }
+  .side-nav { display: none; }
+}

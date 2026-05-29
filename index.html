@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pymss Studio</title>
+    <script>
+      (function () {
+        var mode = localStorage.getItem('pymss:theme_mode') || 'system'
+        var isDark = mode === 'dark' || (mode === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        var bg = isDark ? '#111318' : '#f7f8fb'
+        var fg = isDark ? '#eef1f6' : '#171a1f'
+        document.documentElement.style.background = bg
+        document.documentElement.style.color = fg
+        document.documentElement.className = isDark ? 'dark-theme' : 'light-theme'
+        document.documentElement.lang = localStorage.getItem('pymss:locale') || (navigator.language && navigator.language.startsWith('zh') ? 'zh-CN' : 'en')
+      })()
+    </script>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+      * { box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
