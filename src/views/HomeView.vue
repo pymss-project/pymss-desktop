@@ -25,7 +25,7 @@ const tasks = useTaskStore()
 
 async function checkEnv() {
   try {
-    await app.checkEnv()
+    await app.checkEnvInBackground()
     message.success(t('toast.envChecked'))
   } catch {
     message.error(t('toast.envFailed'))
@@ -113,7 +113,7 @@ async function checkEnv() {
               <template #header><n-icon :component="ListOutline" /> {{ t('home.recentTitle') }}</template>
               <div class="flex-between">
                 <span class="text-muted text-sm">
-                  {{ tasks.runningTasks.length ? `${tasks.runningTasks.length} ${t('tasks.title')}` : t('tasks.empty') }}
+                  {{ tasks.runningTasks.length ? t('home.runningTaskCount', { count: tasks.runningTasks.length }) : t('home.noActiveTasks') }}
                 </span>
                 <n-button text type="primary" @click="router.push('/tasks')">{{ t('nav.tasks') }}</n-button>
               </div>

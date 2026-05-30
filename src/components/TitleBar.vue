@@ -41,14 +41,14 @@ onUnmounted(() => unlisten?.())
     </div>
     <div class="title-drag-space" @mousedown.left="startDrag" />
     <div class="window-actions" @mousedown.stop>
-      <button type="button" aria-label="Minimize" @click="minimize">
+      <button type="button" :aria-label="t('common.minimize')" @click="minimize">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
-      <button type="button" aria-label="Maximize" @click="toggleMaximize">
+      <button type="button" :aria-label="t('common.maximize')" @click="toggleMaximize">
         <svg v-if="isMaximized" width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="3.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 3.5V2a.5.5 0 01.5-.5h6a.5.5 0 01.5.5v6a.5.5 0 01-.5.5h-1.5" stroke="currentColor" stroke-width="1.2"/></svg>
         <svg v-else width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/></svg>
       </button>
-      <button type="button" aria-label="Close" class="danger" @click="close">
+      <button type="button" :aria-label="t('common.close')" class="danger" @click="close">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
     </div>

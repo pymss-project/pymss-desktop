@@ -41,6 +41,7 @@ export type DiagnosticItem = {
 export const useAppStore = defineStore('app', () => {
   const envInfo = ref<EnvInfo | null>(null)
   const envLoading = ref(false)
+  const envCheckedOnce = ref(false)
   const workerEvents = ref<any[]>([])
   const lastError = ref<string | null>(null)
 
@@ -104,8 +105,16 @@ export const useAppStore = defineStore('app', () => {
   function pushWorkerEvent(event: any) {
     workerEvents.value.unshift(event)
     workerEvents.value = workerEvents.value.slice(0, 100)
-    if (event?.type === 'env_info') envInfo.value = event.payload
+    if (event?.type === 'env_info') {
+      envInfo.value = event.payload
+      envLoading.value = false
+      envCheckedOnce.value = true
+    }
     if (event?.type === 'error') lastError.value = event.payload?.message || 'Unknown error'
+    if (event?.type === 'error' && event?.payload?.code === 'ENV_CHECK_FAILED') {
+      envLoading.value = false
+      envCheckedOnce.value = true
+    }
   }
 
   async function checkEnv() {
@@ -114,6 +123,7 @@ export const useAppStore = defineStore('app', () => {
     try {
       const result = await invoke<EnvInfo>('get_env_info')
       envInfo.value = result
+      envCheckedOnce.value = true
       return result
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -123,5 +133,30 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  return { envInfo, envLoading, workerEvents, lastError, diagnostics, envReady, envIssueCount, pushWorkerEvent, checkEnv }
+  async function checkEnvInBackground() {
+    if (envLoading.value) return
+    envLoading.value = true
+    lastError.value = null
+    try {
+      await invoke('start_env_check')
+    } catch (error) {
+      envLoading.value = false
+      lastError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
+  return {
+    envInfo,
+    envLoading,
+    envCheckedOnce,
+    workerEvents,
+    lastError,
+    diagnostics,
+    envReady,
+    envIssueCount,
+    pushWorkerEvent,
+    checkEnv,
+    checkEnvInBackground,
+  }
 })

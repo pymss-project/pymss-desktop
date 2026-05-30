@@ -47,6 +47,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const locale = ref<SupportedLocale>(detectLocale())
   const modelDir = ref(loadSetting('model_dir', ''))
   const outputDir = ref(loadSetting('output_dir', defaultOutputDir()))
+  const separateTaskOutputDir = ref(loadSetting('separate_task_output_dir', true))
   const defaultDevice = ref(loadSetting('default_device', 'auto'))
   const defaultFormat = ref(loadSetting('default_format', 'wav'))
   const downloadSource = ref(loadSetting('download_source', 'modelscope'))
@@ -61,6 +62,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const persisted = {
     model_dir: modelDir, output_dir: outputDir,
+    separate_task_output_dir: separateTaskOutputDir,
     default_device: defaultDevice, default_format: defaultFormat,
     download_source: downloadSource,
     wav_bit_depth: wavBitDepth, flac_bit_depth: flacBitDepth,
@@ -132,7 +134,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
-    themeMode, locale, modelDir, outputDir,
+    themeMode, locale, modelDir, outputDir, separateTaskOutputDir,
     defaultDevice, defaultFormat, downloadSource,
     wavBitDepth, flacBitDepth, mp3BitRate, m4aBitRate, m4aCodec,
     pickModelDir, pickOutputDir,

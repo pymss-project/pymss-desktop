@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { darkTheme } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import TitleBar from '@/components/TitleBar.vue'
@@ -7,17 +7,27 @@ import SideNav from '@/components/SideNav.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAppStore } from '@/stores/app'
 import { resolvedIsDark } from '@/utils/theme'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useI18n } from 'vue-i18n'
 
 const settings = useSettingsStore()
 const app = useAppStore()
+const { t } = useI18n()
+const bootReady = ref(false)
 
 const isDark = computed(() => resolvedIsDark(settings.themeMode))
 
 // Naive UI's seemly/rgba() requires actual CSS color values (not var() references)
 
 onMounted(() => {
+  requestAnimationFrame(() => {
+    bootReady.value = true
+    getCurrentWindow().show().catch(() => {})
+  })
   if (!app.envInfo && !app.envLoading) {
-    app.checkEnv().catch(() => {})
+    setTimeout(() => {
+      app.checkEnvInBackground().catch(() => {})
+    }, 120)
   }
 })
 
@@ -136,9 +146,72 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
               </router-view>
             </main>
           </div>
+          <transition name="boot-fade">
+            <div v-if="!bootReady" class="boot-splash">
+              <div class="boot-splash__mark">P</div>
+            <div class="boot-splash__copy">
+              <strong>Pymss Studio</strong>
+                <span>{{ t('app.bootPreparing') }}</span>
+              </div>
+            </div>
+          </transition>
         </div>
         </n-dialog-provider>
       </n-message-provider>
     </n-notification-provider>
   </n-config-provider>
 </template>
+
+<style scoped>
+.boot-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  background:
+    radial-gradient(circle at 20% 16%, rgba(122, 162, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), transparent 32%),
+    var(--surface);
+}
+
+.boot-splash__mark {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  font-size: 24px;
+  background: linear-gradient(135deg, var(--primary), #8ab5ff);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+}
+
+.boot-splash__copy {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+
+.boot-splash__copy strong {
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.boot-splash__copy span {
+  font-size: 12px;
+  color: var(--on-surface-muted);
+}
+
+.boot-fade-enter-active,
+.boot-fade-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.boot-fade-enter-from,
+.boot-fade-leave-to {
+  opacity: 0;
+}
+</style>

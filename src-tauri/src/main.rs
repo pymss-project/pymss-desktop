@@ -24,6 +24,7 @@ fn main() {
             commands::app_cmd::pick_input_folder,
             commands::app_cmd::pick_output_folder,
             commands::app_cmd::reveal_path,
+            commands::app_cmd::start_env_check,
             commands::app_cmd::start_model_download,
             commands::app_cmd::start_separation,
             commands::app_cmd::worker_health,

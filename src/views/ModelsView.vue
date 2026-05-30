@@ -75,7 +75,7 @@ async function loadModels() {
   try {
     await modelStore.loadModels()
   } catch {
-    message.error(modelStore.error || 'Failed to load models')
+    message.error(modelStore.error || t('models.empty'))
   }
 }
 
@@ -276,7 +276,7 @@ onMounted(() => {
                 :rail-color="'var(--surface-3)'"
               />
               <div v-if="downloadTasks[model.name].totalFiles > 1" class="mc-dl-files">
-                {{ downloadTasks[model.name].completedFiles }} / {{ downloadTasks[model.name].totalFiles }} files
+                {{ t('models.fileProgress', { completed: downloadTasks[model.name].completedFiles, total: downloadTasks[model.name].totalFiles }) }}
               </div>
               <div class="mc-dl-actions">
                 <n-button
@@ -338,7 +338,7 @@ onMounted(() => {
 
             <div class="detail-badges">
               <n-tag v-if="detailLoading" :bordered="false" size="small" type="info" round>
-                Refreshing...
+                {{ t('common.refreshing') }}
               </n-tag>
               <n-tag v-if="selectedInfo.architecture" :bordered="false" size="small" type="info" round>
                 {{ selectedInfo.architecture }}
@@ -373,7 +373,7 @@ onMounted(() => {
                 <span class="detail-val">{{ categoryLabel(selectedInfo) || '—' }}</span>
               </div>
               <div v-if="selectedInfo.aliases?.length" class="detail-row">
-                <span class="detail-label">Aliases</span>
+                <span class="detail-label">{{ t('models.aliases') }}</span>
                 <span class="detail-val">{{ selectedInfo.aliases.join(', ') }}</span>
               </div>
             </div>

@@ -18,6 +18,46 @@ pub async fn get_env_info(app: AppHandle) -> AppResult<Value> {
 }
 
 #[tauri::command]
+pub async fn start_env_check(app: AppHandle) -> AppResult<Value> {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let result = run_worker_once(&handle, "env_info");
+        match result {
+            Ok(payload) => {
+                let _ = handle.emit(
+                    "pymss://worker-event",
+                    serde_json::json!({
+                        "type": "env_info",
+                        "requestId": Value::Null,
+                        "taskId": Value::Null,
+                        "timestamp": Value::Null,
+                        "payload": payload,
+                    }),
+                );
+            }
+            Err(error) => {
+                let _ = handle.emit(
+                    "pymss://worker-event",
+                    serde_json::json!({
+                        "type": "error",
+                        "requestId": Value::Null,
+                        "taskId": Value::Null,
+                        "timestamp": Value::Null,
+                        "payload": {
+                            "code": "ENV_CHECK_FAILED",
+                            "message": error.to_string(),
+                            "recoverable": true,
+                        },
+                    }),
+                );
+            }
+        }
+    });
+
+    Ok(serde_json::json!({ "started": true }))
+}
+
+#[tauri::command]
 pub async fn list_models(app: AppHandle, payload: Option<Value>) -> AppResult<Value> {
     run_worker_with_payload(&app, "list_models", payload)
 }

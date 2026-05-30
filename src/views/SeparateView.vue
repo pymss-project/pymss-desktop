@@ -34,7 +34,7 @@ const deviceOptions = computed(() => settings.deviceOptions(app.envInfo))
 
 onMounted(() => {
   if (!app.envInfo && !app.envLoading) {
-    app.checkEnv().catch(() => {})
+    app.checkEnvInBackground().catch(() => {})
   }
 })
 const selectedDeviceLabel = computed(() => deviceOptions.value.find(item => item.value === settings.defaultDevice)?.label || settings.defaultDevice)
@@ -43,7 +43,7 @@ const steps = computed(() => [
   { title: t('separate.input'), description: inputPath.value ? inputPath.value.split(/[/\\]/).pop() || '' : '' },
   { title: t('separate.model'), description: selectedModel.value || '' },
   { title: t('separate.output'), description: settings.outputDir || t('separate.outputDefault') },
-  { title: t('separate.advanced'), description: `${selectedDeviceLabel.value} / ${settings.defaultFormat}` },
+  { title: t('separate.advanced'), description: `${selectedDeviceLabel.value} · ${settings.defaultFormat}` },
 ])
 
 async function start() {
@@ -156,6 +156,13 @@ function prevStep() {
             </div>
           </template>
           <n-input v-model:value="settings.outputDir" :placeholder="t('separate.outputDefault')" clearable />
+          <div class="output-option mt-md">
+            <div class="output-option__copy">
+              <strong>{{ t('separate.separateTaskOutputDir') }}</strong>
+              <span>{{ t('separate.separateTaskOutputDirHint') }}</span>
+            </div>
+            <n-switch v-model:value="settings.separateTaskOutputDir" />
+          </div>
           <div class="mt-md" style="display:flex;gap:10px">
             <n-button secondary @click="task.revealPath(settings.outputDir || 'results')">
               {{ t('separate.openOutput') }}
@@ -197,6 +204,72 @@ function prevStep() {
               />
             </n-grid-item>
           </n-grid>
+
+          <div class="advanced-section mt-md">
+            <div class="advanced-section__head">
+              <strong>{{ t('audio.title') }}</strong>
+              <span>{{ t('separate.audioQualityHint') }}</span>
+            </div>
+            <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen">
+              <n-grid-item>
+                <label class="text-muted text-sm">{{ t('audio.wavBitDepth') }}</label>
+                <n-select
+                  v-model:value="settings.wavBitDepth"
+                  :options="[
+                    { label: t('audio.pcm16'), value: 'PCM_16' },
+                    { label: t('audio.pcm24'), value: 'PCM_24' },
+                    { label: t('audio.float'), value: 'FLOAT' },
+                  ]"
+                />
+              </n-grid-item>
+              <n-grid-item>
+                <label class="text-muted text-sm">{{ t('audio.flacBitDepth') }}</label>
+                <n-select
+                  v-model:value="settings.flacBitDepth"
+                  :options="[
+                    { label: t('audio.pcm16'), value: 'PCM_16' },
+                    { label: t('audio.pcm24'), value: 'PCM_24' },
+                  ]"
+                />
+              </n-grid-item>
+              <n-grid-item>
+                <label class="text-muted text-sm">{{ t('audio.mp3BitRate') }}</label>
+                <n-select
+                  v-model:value="settings.mp3BitRate"
+                  :options="[
+                    { label: t('audio.bitrate128'), value: '128k' },
+                    { label: t('audio.bitrate192'), value: '192k' },
+                    { label: t('audio.bitrate256'), value: '256k' },
+                    { label: t('audio.bitrate320'), value: '320k' },
+                  ]"
+                />
+              </n-grid-item>
+              <n-grid-item>
+                <label class="text-muted text-sm">{{ t('audio.m4aBitRate') }}</label>
+                <n-select
+                  v-model:value="settings.m4aBitRate"
+                  :options="[
+                    { label: t('audio.bitrate128'), value: '128k' },
+                    { label: t('audio.bitrate192'), value: '192k' },
+                    { label: t('audio.bitrate256'), value: '256k' },
+                    { label: t('audio.bitrate320'), value: '320k' },
+                  ]"
+                />
+              </n-grid-item>
+              <n-grid-item>
+                <label class="text-muted text-sm">{{ t('audio.m4aCodec') }}</label>
+                <n-select
+                  v-model:value="settings.m4aCodec"
+                  :options="[
+                    { label: t('audio.codecAacAt'), value: 'aac_at' },
+                    { label: t('audio.codecAac'), value: 'aac' },
+                    { label: t('audio.codecAlac'), value: 'alac' },
+                  ]"
+                />
+              </n-grid-item>
+            </n-grid>
+          </div>
+
           <div class="mt-md" style="display:flex;gap:16px">
             <n-checkbox v-model:checked="useTta">{{ t('separate.tta') }}</n-checkbox>
             <n-checkbox v-model:checked="debug">{{ t('separate.debug') }}</n-checkbox>
@@ -288,3 +361,61 @@ function prevStep() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.output-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary-soft) 34%, var(--surface-1));
+}
+
+.output-option__copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.output-option__copy strong {
+  font-size: 14px;
+}
+
+.output-option__copy span {
+  color: var(--on-surface-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.advanced-section {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 54%, transparent);
+}
+
+.advanced-section__head {
+  display: grid;
+  gap: 4px;
+}
+
+.advanced-section__head strong {
+  font-size: 14px;
+}
+
+.advanced-section__head span {
+  color: var(--on-surface-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .output-option {
+    align-items: flex-start;
+  }
+}
+</style>

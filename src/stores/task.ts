@@ -68,8 +68,9 @@ function joinOutputPath(base: string, child: string) {
   return `${base.replace(/[\\/]$/, '')}${separator}${child}`
 }
 
-function taskOutputPath(base: string, taskId: string) {
-  return joinOutputPath(normalizeOutputPath(base), taskId)
+function resolveTaskOutputPath(base: string, taskId: string, separateTaskOutputDir: boolean) {
+  const outputDir = normalizeOutputPath(base)
+  return separateTaskOutputDir ? joinOutputPath(outputDir, taskId) : outputDir
 }
 
 function outputsFromFiles(outputDir: string, files: string[], outputFormat = 'wav'): StemOutput[] {
@@ -112,6 +113,8 @@ function normalizeTask(task: Partial<SeparationTask>): SeparationTask {
 export const useTaskStore = defineStore('task', () => {
   const tasks = ref<SeparationTask[]>(loadHistory())
   const activeTaskId = ref<string | null>(tasks.value[0]?.id || null)
+  const focusedResultTaskId = ref<string | null>(null)
+  const focusedTaskId = ref<string | null>(null)
   const inputPath = ref('')
   const useTta = ref(false)
   const debug = ref(false)
@@ -132,6 +135,11 @@ export const useTaskStore = defineStore('task', () => {
   const activeTask = computed(() => tasks.value.find((task) => task.id === activeTaskId.value) || null)
   const completedTasks = computed(() => tasks.value.filter((task) => task.status === 'done'))
   const runningTasks = computed(() => tasks.value.filter((task) => !TERMINAL_STATUSES.includes(task.status)))
+  const resultTasks = computed(() => completedTasks.value.filter((task) => task.outputs.length || task.files.length))
+  const queuedTasks = computed(() => tasks.value.filter((task) => task.status === 'queued'))
+  const failedTasks = computed(() => tasks.value.filter((task) => task.status === 'failed'))
+  const spotlightTasks = computed(() => tasks.value.filter((task) => !TERMINAL_STATUSES.includes(task.status) || task.status === 'failed'))
+  const historyTasks = computed(() => tasks.value.filter((task) => !spotlightTasks.value.some((candidate) => candidate.id === task.id)))
 
   watch(tasks, (value) => {
     const persistable = value.slice(0, 80).map((task) => ({ ...task, logs: task.logs.slice(-120) }))
@@ -215,9 +223,27 @@ export const useTaskStore = defineStore('task', () => {
     await invoke('reveal_path', { path })
   }
 
+  function primaryRevealPath(task: SeparationTask) {
+    return task.output
+  }
+
+  function getTaskById(id: string) {
+    return tasks.value.find((task) => task.id === id) || null
+  }
+
+  function focusResultTask(id: string | null) {
+    focusedResultTaskId.value = id
+  }
+
+  function focusTask(id: string | null) {
+    focusedTaskId.value = id
+  }
+
   function removeTask(id: string) {
     tasks.value = tasks.value.filter((task) => task.id !== id)
     if (activeTaskId.value === id) activeTaskId.value = tasks.value[0]?.id || null
+    if (focusedResultTaskId.value === id) focusedResultTaskId.value = null
+    if (focusedTaskId.value === id) focusedTaskId.value = null
   }
 
   function clearHistory() {
@@ -251,7 +277,7 @@ export const useTaskStore = defineStore('task', () => {
       id,
       model: modelStore.selectedModel,
       input: inputPath.value,
-      output: taskOutputPath(settings.outputDir, id),
+      output: resolveTaskOutputPath(settings.outputDir, id, settings.separateTaskOutputDir),
       status: 'queued',
       message: 'Queued',
       createdAt: Date.now(),
@@ -324,7 +350,7 @@ export const useTaskStore = defineStore('task', () => {
       id,
       model: existing.model,
       input: existing.input,
-      output: taskOutputPath(settings.outputDir, id),
+      output: resolveTaskOutputPath(settings.outputDir, id, settings.separateTaskOutputDir),
       status: 'queued',
       message: 'Queued',
       createdAt: Date.now(),
@@ -379,6 +405,13 @@ export const useTaskStore = defineStore('task', () => {
     activeTask,
     completedTasks,
     runningTasks,
+    resultTasks,
+    queuedTasks,
+    failedTasks,
+    spotlightTasks,
+    historyTasks,
+    focusedResultTaskId,
+    focusedTaskId,
     inputPath,
     useTta,
     debug,
@@ -398,6 +431,10 @@ export const useTaskStore = defineStore('task', () => {
     pickFiles,
     pickInputFolder,
     revealPath,
+    primaryRevealPath,
+    getTaskById,
+    focusResultTask,
+    focusTask,
     removeTask,
     clearHistory,
     cancelTask,

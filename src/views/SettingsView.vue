@@ -7,7 +7,6 @@ import { useSettingsStore } from '@/stores/settings'
 import { useAppStore } from '@/stores/app'
 import {
   ColorPaletteOutline,
-  GlobeOutline,
   FolderOpenOutline,
   SettingsOutline,
 } from '@vicons/ionicons5'
@@ -15,12 +14,12 @@ import {
 const { t } = useI18n()
 const settings = useSettingsStore()
 const app = useAppStore()
-const { themeMode, locale, modelDir, outputDir, defaultDevice, defaultFormat, downloadSource, wavBitDepth, flacBitDepth, mp3BitRate, m4aBitRate, m4aCodec } = storeToRefs(settings)
+const { themeMode, locale, modelDir, outputDir, defaultDevice, downloadSource } = storeToRefs(settings)
 const deviceOptions = computed(() => settings.deviceOptions(app.envInfo))
 
 onMounted(() => {
   if (!app.envInfo && !app.envLoading) {
-    app.checkEnv().catch(() => {})
+    app.checkEnvInBackground().catch(() => {})
   }
 })
 </script>
@@ -128,24 +127,12 @@ onMounted(() => {
             </div>
           </template>
 
-          <n-grid :cols="3" :x-gap="16" :y-gap="16">
+          <n-grid :cols="2" :x-gap="16" :y-gap="16">
             <n-grid-item>
               <label class="text-muted text-sm">{{ t('settings.defaultDevice') }}</label>
               <n-select
                 v-model:value="defaultDevice"
                 :options="deviceOptions"
-              />
-            </n-grid-item>
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('settings.defaultFormat') }}</label>
-              <n-select
-                v-model:value="defaultFormat"
-                :options="[
-                  { label: 'WAV', value: 'wav' },
-                  { label: 'FLAC', value: 'flac' },
-                  { label: 'MP3', value: 'mp3' },
-                  { label: 'M4A', value: 'm4a' },
-                ]"
               />
             </n-grid-item>
             <n-grid-item>
@@ -156,77 +143,6 @@ onMounted(() => {
                   { label: 'ModelScope', value: 'modelscope' },
                   { label: 'Hugging Face', value: 'huggingface' },
                   { label: 'HF Mirror', value: 'hf-mirror' },
-                ]"
-              />
-            </n-grid-item>
-          </n-grid>
-        </n-card>
-      </n-grid-item>
-
-      <!-- Audio Quality -->
-      <n-grid-item :span="2">
-        <n-card :bordered="true" size="small">
-          <template #header>
-            <div class="flex-center gap-sm" style="justify-content:flex-start">
-              <n-icon :component="SettingsOutline" size="18" />
-              <span>{{ t('audio.title') }}</span>
-            </div>
-          </template>
-
-          <n-grid :cols="4" :x-gap="16" :y-gap="16">
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('audio.wavBitDepth') }}</label>
-              <n-select
-                v-model:value="wavBitDepth"
-                :options="[
-                  { label: t('audio.pcm16'), value: 'PCM_16' },
-                  { label: t('audio.pcm24'), value: 'PCM_24' },
-                  { label: t('audio.float'), value: 'FLOAT' },
-                ]"
-              />
-            </n-grid-item>
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('audio.flacBitDepth') }}</label>
-              <n-select
-                v-model:value="flacBitDepth"
-                :options="[
-                  { label: t('audio.pcm16'), value: 'PCM_16' },
-                  { label: t('audio.pcm24'), value: 'PCM_24' },
-                ]"
-              />
-            </n-grid-item>
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('audio.mp3BitRate') }}</label>
-              <n-select
-                v-model:value="mp3BitRate"
-                :options="[
-                  { label: t('audio.bitrate128'), value: '128k' },
-                  { label: t('audio.bitrate192'), value: '192k' },
-                  { label: t('audio.bitrate256'), value: '256k' },
-                  { label: t('audio.bitrate320'), value: '320k' },
-                ]"
-              />
-            </n-grid-item>
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('audio.m4aBitRate') }}</label>
-              <n-select
-                v-model:value="m4aBitRate"
-                :options="[
-                  { label: t('audio.bitrate128'), value: '128k' },
-                  { label: t('audio.bitrate192'), value: '192k' },
-                  { label: t('audio.bitrate256'), value: '256k' },
-                  { label: t('audio.bitrate320'), value: '320k' },
-                ]"
-              />
-            </n-grid-item>
-            <n-grid-item>
-              <label class="text-muted text-sm">{{ t('audio.m4aCodec') }}</label>
-              <n-select
-                v-model:value="m4aCodec"
-                :options="[
-                  { label: t('audio.codecAacAt'), value: 'aac_at' },
-                  { label: t('audio.codecAac'), value: 'aac' },
-                  { label: t('audio.codecAlac'), value: 'alac' },
                 ]"
               />
             </n-grid-item>

@@ -1,34 +1,38 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import {
   CheckmarkCircleOutline,
   AlertCircleOutline,
   CloseCircleOutline,
   HourglassOutline,
-  FolderOpenOutline,
   RefreshOutline,
   TrashOutline,
+  TerminalOutline,
+  FolderOpenOutline,
+  LayersOutline,
+  ArchiveOutline,
 } from '@vicons/ionicons5'
 import { useTaskStore, type SeparationTask } from '@/stores/task'
 
 const { t } = useI18n()
+const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const task = useTaskStore()
 
 const terminalStatuses = ['done', 'failed', 'cancelled']
-const runningCount = computed(() => task.runningTasks.length)
-const doneCount = computed(() => task.completedTasks.length)
 const showLogModal = ref(false)
 const selectedLogTask = ref<SeparationTask | null>(null)
+const historyExpanded = ref(true)
+
+const runningTasks = computed(() => task.runningTasks)
+const historyTasks = computed(() => task.tasks.filter((item) => terminalStatuses.includes(item.status)))
 
 function formatTime(value: number) {
   return new Date(value).toLocaleString()
-}
-
-function openOutput(item: SeparationTask) {
-  task.revealPath(item.outputs[0]?.path || item.output)
 }
 
 function openLogs(item: SeparationTask) {
@@ -47,7 +51,7 @@ function logClass(line: string) {
 
 async function handleCancel(id: string) {
   const ok = await task.cancelTask(id)
-  if (ok) message.success('Cancelled')
+  if (ok) message.success(t('tasks.cancelSuccess'))
 }
 
 async function handleRetry(id: string) {
@@ -59,20 +63,32 @@ async function handleRetry(id: string) {
   }
 }
 
+function handleClearHistory() {
+  dialog.warning({
+    title: t('tasks.clearHistoryTitle'),
+    content: t('tasks.clearHistoryConfirm'),
+    positiveText: t('tasks.clearHistoryPositive'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      task.clearHistory()
+      message.success(t('tasks.clearHistorySuccess'))
+    },
+  })
+}
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
-    queued: 'Queued',
-    preparing: 'Preparing',
-    validating_input: 'Validating',
-    downloading_model: 'Checking model',
-    ensuring_model: 'Checking model',
-    loading_model: 'Loading model',
-    separating: 'Separating',
-    writing_output: 'Writing output',
-    done: 'Done',
-    failed: 'Failed',
-    cancelled: 'Cancelled',
+    queued: t('tasks.statusQueued'),
+    preparing: t('tasks.statusPreparing'),
+    validating_input: t('tasks.statusValidatingInput'),
+    downloading_model: t('tasks.statusCheckingModel'),
+    ensuring_model: t('tasks.statusCheckingModel'),
+    loading_model: t('tasks.statusLoadingModel'),
+    separating: t('tasks.statusSeparating'),
+    writing_output: t('tasks.statusWritingOutput'),
+    done: t('tasks.statusDone'),
+    failed: t('tasks.statusFailed'),
+    cancelled: t('tasks.statusCancelled'),
   }
   return labels[status] || status
 }
@@ -115,130 +131,205 @@ function statusType(status: string) {
     default: return 'info' as const
   }
 }
+
+function jumpToResult(item: SeparationTask) {
+  task.focusResultTask(item.id)
+  router.push('/results')
+}
+
+function taskCardId(item: Pick<SeparationTask, 'id'>) {
+  return `task-card-${item.id}`
+}
+
+function scrollToFocusedTask(id: string | null) {
+  if (!id) return
+  nextTick(() => {
+    const target = document.getElementById(taskCardId({ id }))
+    target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
+watch(() => task.focusedTaskId, (value) => {
+  if (value) {
+    scrollToFocusedTask(value)
+    task.focusTask(null)
+  }
+})
+
+onMounted(() => {
+  if (task.focusedTaskId) {
+    scrollToFocusedTask(task.focusedTaskId)
+    task.focusTask(null)
+  }
+})
 </script>
 
 <template>
-  <div class="page">
-    <div class="page-header-compact">
+  <div class="page tasks-workbench">
+    <div class="page-header-compact tasks-workbench__header">
       <div>
         <h1>{{ t('tasks.title') }}</h1>
         <p>{{ t('tasks.subtitle') }}</p>
-        <div v-if="task.tasks.length" class="task-summary">
-          <span>{{ runningCount }} 个进行中</span>
-          <span>{{ doneCount }} 个已完成</span>
-          <span>{{ task.tasks.length }} 个总任务</span>
-        </div>
       </div>
-      <n-button v-if="task.tasks.length" secondary @click="task.clearHistory()">
+      <n-button v-if="historyTasks.length" secondary @click="handleClearHistory()">
         <template #icon><n-icon :component="TrashOutline" /></template>
         {{ t('tasks.clearHistory') }}
       </n-button>
     </div>
 
-    <!-- Empty State -->
     <n-card v-if="!task.tasks.length" :bordered="true">
-      <div style="text-align:center;padding:32px 0">
+      <div class="tasks-empty">
         <n-icon :component="HourglassOutline" size="48" color="var(--on-surface-muted)" />
-        <p class="text-muted mt-md">{{ t('tasks.empty') }}</p>
+        <p class="text-muted mt-md">{{ t('tasks.emptyHint') }}</p>
       </div>
     </n-card>
 
-    <!-- Task List -->
-    <div v-else style="display:grid;gap:12px">
-      <n-card
-        v-for="item in task.tasks"
-        :key="item.id"
-        :bordered="true"
-        :segmented="{ content: true }"
-        size="small"
-      >
-        <template #header>
-          <div class="flex-between" style="flex:1">
-            <div>
-              <strong style="font-size:14px">{{ item.input.split(/[/\\]/).pop() || item.input }}</strong>
-              <span class="text-muted" style="font-size:12px;margin-left:8px">{{ item.model }}</span>
-            </div>
-            <n-tag :type="statusType(item.status)" :bordered="false" size="small">
-              <template #icon><n-icon :component="statusIcon(item.status)" /></template>
-              {{ statusLabel(item.status) }}
-            </n-tag>
+    <template v-else>
+      <section class="tasks-section">
+        <div class="tasks-section__title">
+          <div>
+            <h2>进行中（{{ runningTasks.length }}）</h2>
+            <p>{{ t('tasks.runningDescription') }}</p>
           </div>
-        </template>
-
-        <div class="task-progress-block">
-          <div class="task-progress-head">
-            <span>{{ item.stageLabel || statusLabel(item.status) }}</span>
-            <span>{{ Math.round(item.progress || 0) }}%</span>
-          </div>
-          <n-progress
-            type="line"
-            :percentage="Math.round(item.progress || 0)"
-            :status="progressStatus(item.status)"
-            :processing="isRunning(item.status)"
-            :height="8"
-            :show-indicator="false"
-          />
-          <p class="text-muted text-sm task-message">{{ item.message }}</p>
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-          <n-button
-            v-if="isRunning(item.status)"
-            size="tiny"
-            secondary
-            @click="handleCancel(item.id)"
+
+        <div v-if="runningTasks.length" class="tasks-list">
+          <n-card
+            v-for="item in runningTasks"
+            :id="taskCardId(item)"
+            :key="item.id"
+            :bordered="true"
+            size="small"
+            class="task-workbench-card"
           >
-            {{ t('common.cancel') }}
-          </n-button>
-          <n-button
-            v-if="['failed','cancelled'].includes(item.status)"
-            size="tiny"
-            secondary
-            @click="handleRetry(item.id)"
-          >
-            <template #icon><n-icon :component="RefreshOutline" /></template>
-            {{ t('tasks.retry') }}
-          </n-button>
-          <n-button size="tiny" secondary :disabled="!item.output" @click="task.revealPath(item.output)">
-            <template #icon><n-icon :component="FolderOpenOutline" /></template>
-            {{ t('tasks.openOutput') }}
-          </n-button>
-          <n-button size="tiny" secondary :disabled="!item.outputs.length" @click="openOutput(item)">
-            {{ t('tasks.openFirstOutput') }}
-          </n-button>
-          <n-button size="tiny" secondary :disabled="!item.logs.length" @click="openLogs(item)">
-            Logs
-          </n-button>
-          <n-button size="tiny" quaternary @click="task.removeTask(item.id)">
-            {{ t('tasks.remove') }}
+            <template #header>
+              <div class="task-workbench-card__top">
+                <div>
+                  <strong class="task-workbench-card__title">{{ item.input.split(/[/\\]/).pop() || item.input }}</strong>
+                  <p class="task-workbench-card__subtitle">{{ item.model }}</p>
+                </div>
+                <n-tag :type="statusType(item.status)" :bordered="false" size="small">
+                  <template #icon><n-icon :component="statusIcon(item.status)" /></template>
+                  {{ statusLabel(item.status) }}
+                </n-tag>
+              </div>
+            </template>
+
+            <div class="task-workbench-card__progress">
+              <div class="task-progress-head">
+                <span>{{ item.stageLabel || statusLabel(item.status) }}</span>
+                <span>{{ Math.round(item.progress || 0) }}%</span>
+              </div>
+              <n-progress
+                type="line"
+                :percentage="Math.round(item.progress || 0)"
+                :status="progressStatus(item.status)"
+                :processing="isRunning(item.status)"
+                :height="8"
+                :show-indicator="false"
+              />
+              <p class="text-muted text-sm task-message">{{ item.error || item.message }}</p>
+            </div>
+
+            <div class="task-workbench-card__meta">
+              <span>{{ t('tasks.createdAt') }}：{{ formatTime(item.createdAt) }}</span>
+              <span>{{ t('tasks.updatedAt') }}：{{ formatTime(item.updatedAt) }}</span>
+              <span>{{ t('tasks.duration') }}：{{ taskDuration(item) }}</span>
+            </div>
+
+            <div class="task-workbench-card__actions">
+              <n-button
+                v-if="isRunning(item.status)"
+                size="tiny"
+                secondary
+                @click="handleCancel(item.id)"
+              >
+                {{ t('common.cancel') }}
+              </n-button>
+              <n-button
+                v-if="['failed','cancelled'].includes(item.status)"
+                size="tiny"
+                secondary
+                @click="handleRetry(item.id)"
+              >
+                <template #icon><n-icon :component="RefreshOutline" /></template>
+                {{ t('tasks.retry') }}
+              </n-button>
+              <n-button size="tiny" secondary :disabled="!item.logs.length" @click="openLogs(item)">
+                <template #icon><n-icon :component="TerminalOutline" /></template>
+                {{ t('tasks.logs') }}
+              </n-button>
+              <n-button
+                v-if="item.status === 'done'"
+                size="tiny"
+                secondary
+                @click="jumpToResult(item)"
+              >
+                <template #icon><n-icon :component="FolderOpenOutline" /></template>
+                {{ t('tasks.viewResult') }}
+              </n-button>
+              <n-button size="tiny" quaternary @click="task.removeTask(item.id)">
+                {{ t('tasks.remove') }}
+              </n-button>
+            </div>
+          </n-card>
+        </div>
+        <n-card v-else :bordered="true" size="small">
+          <div class="tasks-empty-inline">
+            <n-icon :component="LayersOutline" size="28" color="var(--on-surface-muted)" />
+            <span class="text-muted">{{ t('tasks.noRunningTasks') }}</span>
+          </div>
+        </n-card>
+      </section>
+
+      <section class="tasks-section">
+        <div class="tasks-section__title">
+          <div>
+            <h2>历史任务（{{ historyTasks.length }}）</h2>
+            <p>{{ t('tasks.historyDescription') }}</p>
+          </div>
+          <n-button text type="primary" @click="historyExpanded = !historyExpanded">
+            {{ historyExpanded ? t('tasks.collapse') : t('tasks.expand') }}
           </n-button>
         </div>
 
-        <!-- Outputs -->
-        <div v-if="item.outputs.length" class="mt-md">
-          <strong class="text-sm">{{ t('tasks.outputs') }}</strong>
-          <div class="mt-sm" style="display:grid;gap:6px">
-            <div v-for="output in item.outputs" :key="output.path" class="task-output-row">
-              <n-tag size="tiny" :bordered="false">{{ output.stem }}</n-tag>
-              <code>{{ output.path }}</code>
-              <n-button size="tiny" quaternary @click="task.revealPath(output.path)">{{ t('common.open') }}</n-button>
+        <n-collapse-transition :show="historyExpanded">
+          <div v-if="historyTasks.length" class="tasks-history-list">
+            <div
+              v-for="item in historyTasks"
+              :id="taskCardId(item)"
+              :key="item.id"
+              class="tasks-history-row"
+            >
+              <div class="tasks-history-row__main">
+                <strong>{{ item.input.split(/[/\\]/).pop() || item.input }}</strong>
+                <span>{{ item.model }}</span>
+              </div>
+              <div class="tasks-history-row__meta">
+                <n-tag size="small" :type="statusType(item.status)" :bordered="false">{{ statusLabel(item.status) }}</n-tag>
+                <span>{{ taskDuration(item) }}</span>
+                <span>{{ formatTime(item.updatedAt) }}</span>
+              </div>
+              <div class="tasks-history-row__actions">
+                <n-button size="tiny" tertiary :disabled="!item.logs.length" @click="openLogs(item)">{{ t('tasks.logs') }}</n-button>
+                <n-button v-if="item.status === 'done'" size="tiny" tertiary @click="jumpToResult(item)">{{ t('tasks.viewResult') }}</n-button>
+                <n-button size="tiny" quaternary @click="task.removeTask(item.id)">{{ t('tasks.remove') }}</n-button>
+              </div>
             </div>
           </div>
-        </div>
-
-        <template #footer>
-          <div class="task-footer-meta">
-            <span>创建：{{ formatTime(item.createdAt) }}</span>
-            <span>更新：{{ formatTime(item.updatedAt) }}</span>
-            <span>耗时：{{ taskDuration(item) }}</span>
-          </div>
-        </template>
-      </n-card>
-    </div>
-
+          <n-card v-else :bordered="true" size="small">
+            <div class="tasks-empty-inline">
+              <n-icon :component="ArchiveOutline" size="28" color="var(--on-surface-muted)" />
+              <span class="text-muted">{{ t('tasks.noHistoryTasks') }}</span>
+            </div>
+          </n-card>
+        </n-collapse-transition>
+      </section>
+    </template>
 
     <n-modal v-model:show="showLogModal" style="width:min(960px, 92vw)">
       <n-card
-        :title="selectedLogTask ? `${selectedLogTask.input.split(/[/\\]/).pop() || selectedLogTask.input} - Logs` : 'Logs'"
+        :title="selectedLogTask ? `${selectedLogTask.input.split(/[/\\]/).pop() || selectedLogTask.input} - ${t('tasks.logs')}` : t('tasks.logs')"
         :bordered="false"
         size="small"
         role="dialog"
@@ -246,7 +337,7 @@ function statusType(status: string) {
       >
         <template #header-extra>
           <n-tag v-if="selectedLogTask" size="small" :bordered="false" :type="statusType(selectedLogTask.status)">
-            {{ statusLabel(selectedLogTask.status) }} / {{ selectedLogTask.logs.length }} lines
+            {{ t('tasks.logLineCount', { status: statusLabel(selectedLogTask.status), count: selectedLogTask.logs.length }) }}
           </n-tag>
         </template>
 
@@ -261,12 +352,12 @@ function statusType(status: string) {
             <span class="log-line-text">{{ line }}</span>
           </div>
         </div>
-        <div v-else class="log-empty">No logs yet.</div>
+        <div v-else class="log-empty">{{ t('tasks.noLogs') }}</div>
 
         <template #footer>
           <div class="log-modal-footer">
             <span v-if="selectedLogTask" class="text-muted">{{ selectedLogTask.id }}</span>
-            <n-button size="small" @click="showLogModal = false">Close</n-button>
+            <n-button size="small" @click="showLogModal = false">{{ t('common.close') }}</n-button>
           </div>
         </template>
       </n-card>
@@ -274,19 +365,144 @@ function statusType(status: string) {
   </div>
 </template>
 
-
 <style scoped>
-.task-summary {
+.tasks-workbench {
+  display: grid;
+  gap: 20px;
+}
+
+.tasks-section {
+  display: grid;
+  gap: 12px;
+}
+
+.tasks-section__title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tasks-section__title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.tasks-section__title p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--on-surface-muted);
+}
+
+.tasks-list {
+  display: grid;
+  gap: 12px;
+}
+
+.task-workbench-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-workbench-card__title {
+  display: block;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.task-workbench-card__subtitle {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--on-surface-muted);
+}
+
+.task-workbench-card__progress {
+  margin-top: 4px;
+}
+
+.task-workbench-card__meta {
   display: flex;
   gap: 12px;
-  margin-top: 8px;
-  color: var(--on-surface-muted);
+  flex-wrap: wrap;
   font-size: 12px;
+  color: var(--on-surface-muted);
+  margin-top: 12px;
+}
+
+.task-workbench-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.tasks-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tasks-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--outline);
+  background: rgba(255,255,255,0.02);
+}
+
+.tasks-history-row__main {
+  min-width: 0;
+}
+
+.tasks-history-row__main strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-history-row__main span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--on-surface-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-history-row__meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--on-surface-muted);
+}
+
+.tasks-history-row__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
   flex-wrap: wrap;
 }
 
-.task-progress-block {
-  margin-top: 2px;
+.tasks-empty,
+.tasks-empty-inline {
+  text-align: center;
+  padding: 32px 0;
+}
+
+.tasks-empty-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
 }
 
 .task-progress-head {
@@ -301,14 +517,6 @@ function statusType(status: string) {
 
 .task-message {
   margin: 6px 0 0;
-}
-
-.task-footer-meta {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  color: var(--on-surface-muted);
-  font-size: 12px;
 }
 
 .log-console {
@@ -364,4 +572,13 @@ function statusType(status: string) {
   gap: 12px;
 }
 
+@media (max-width: 980px) {
+  .tasks-history-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-history-row__actions {
+    justify-content: flex-start;
+  }
+}
 </style>
