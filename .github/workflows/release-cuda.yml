@@ -165,8 +165,12 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf zstd
+          # GitHub-hosted Ubuntu images may include a Google Chrome apt source.
+          # It is unrelated to this build and occasionally fails during mirror sync,
+          # which would otherwise break apt-get update for all packages.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf zstd
 
       - name: Install frontend dependencies
         working-directory: .
