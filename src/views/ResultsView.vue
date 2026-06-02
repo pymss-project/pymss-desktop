@@ -6,16 +6,21 @@ import {
   FolderOpenOutline,
   FolderOutline,
   DocumentTextOutline,
+  ColorWandOutline,
   SearchOutline,
   SwapVerticalOutline,
   TimeOutline,
 } from '@vicons/ionicons5'
 import { useTaskStore, type SeparationTask } from '@/stores/task'
+import { useEditorStore } from '@/stores/editor'
+import { useMessage } from 'naive-ui'
 
 type ResultSort = 'time_desc' | 'time_asc' | 'name_asc' | 'name_desc'
 
 const { t } = useI18n()
 const task = useTaskStore()
+const editor = useEditorStore()
+const message = useMessage()
 
 const search = ref('')
 const sortBy = ref<ResultSort>('time_desc')
@@ -68,6 +73,15 @@ function resultCardId(item: Pick<SeparationTask, 'id'>) {
 
 function openResultDir(item: SeparationTask) {
   task.revealPath(item.output)
+}
+
+async function openInEditor(item: SeparationTask) {
+  try {
+    const project = await editor.ensureProjectForTask(item)
+    await editor.openProjectWindow(project.id)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('editor.notFound'))
+  }
 }
 
 function isExpanded(id: string) {
@@ -190,6 +204,10 @@ function formatTime(value: number) {
         </button>
 
         <div class="result-row__actions">
+          <n-button size="small" type="primary" @click="openInEditor(item)">
+            <template #icon><n-icon :component="ColorWandOutline" /></template>
+            {{ t('results.openInEditor') }}
+          </n-button>
           <n-button size="small" type="primary" secondary @click="openResultDir(item)">
             <template #icon><n-icon :component="FolderOpenOutline" /></template>
             {{ t('results.openDirectory') }}

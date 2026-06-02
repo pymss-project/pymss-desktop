@@ -14,7 +14,7 @@ import {
 const { t } = useI18n()
 const settings = useSettingsStore()
 const app = useAppStore()
-const { themeMode, locale, modelDir, defaultDevice, downloadSource } = storeToRefs(settings)
+const { themeMode, locale, modelDir, defaultDevice, downloadSource, maxConcurrentSeparations } = storeToRefs(settings)
 const deviceOptions = computed(() => settings.deviceOptions(app.envInfo))
 
 onMounted(() => {
@@ -45,28 +45,28 @@ onMounted(() => {
           </template>
 
           <label class="text-muted text-sm">{{ t('settings.theme') }}</label>
-          <div style="display:flex;gap:8px;margin:8px 0 16px">
-            <n-button
-              size="small"
-              :type="themeMode === 'system' ? 'primary' : 'default'"
+          <div class="theme-switcher">
+            <button
+              type="button"
+              :class="{ active: themeMode === 'system' }"
               @click="themeMode = 'system'"
             >
               {{ t('settings.themeSystem') }}
-            </n-button>
-            <n-button
-              size="small"
-              :type="themeMode === 'dark' ? 'primary' : 'default'"
+            </button>
+            <button
+              type="button"
+              :class="{ active: themeMode === 'dark' }"
               @click="themeMode = 'dark'"
             >
               {{ t('settings.themeDark') }}
-            </n-button>
-            <n-button
-              size="small"
-              :type="themeMode === 'light' ? 'primary' : 'default'"
+            </button>
+            <button
+              type="button"
+              :class="{ active: themeMode === 'light' }"
               @click="themeMode = 'light'"
             >
               {{ t('settings.themeLight') }}
-            </n-button>
+            </button>
           </div>
 
           <label class="text-muted text-sm">{{ t('settings.language') }}</label>
@@ -140,6 +140,70 @@ onMounted(() => {
           </n-grid>
         </n-card>
       </n-grid-item>
+
+      <!-- Execution -->
+      <n-grid-item :span="2">
+        <n-card :bordered="true" size="small">
+          <template #header>
+            <div class="flex-center gap-sm" style="justify-content:flex-start">
+              <n-icon :component="SettingsOutline" size="18" />
+              <span>{{ t('settings.execution') }}</span>
+            </div>
+          </template>
+
+          <n-grid :cols="2" :x-gap="16" :y-gap="16">
+            <n-grid-item>
+              <label class="text-muted text-sm">{{ t('settings.maxConcurrentSeparations') }}</label>
+              <n-select
+                v-model:value="maxConcurrentSeparations"
+                :options="[
+                  { label: '1', value: 1 },
+                  { label: '2', value: 2 },
+                  { label: '3', value: 3 },
+                ]"
+              />
+              <p class="text-muted text-sm" style="margin:8px 0 0">
+                {{ t('settings.maxConcurrentSeparationsHint') }}
+              </p>
+            </n-grid-item>
+          </n-grid>
+        </n-card>
+      </n-grid-item>
     </n-grid>
   </div>
 </template>
+
+<style scoped>
+.theme-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin: 8px 0 16px;
+  padding: 4px;
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.theme-switcher button {
+  min-width: 0;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 8px;
+  color: var(--on-surface-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.theme-switcher button:hover {
+  color: var(--on-surface);
+  background: var(--surface-3);
+}
+
+.theme-switcher button.active {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  font-weight: 700;
+}
+</style>

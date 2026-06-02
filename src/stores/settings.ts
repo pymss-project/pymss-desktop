@@ -51,6 +51,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const defaultDevice = ref(loadSetting('default_device', 'auto'))
   const defaultFormat = ref(loadSetting('default_format', 'wav'))
   const downloadSource = ref(loadSetting('download_source', 'modelscope'))
+  const maxConcurrentSeparations = ref(loadSetting('max_concurrent_separations', 1))
   const wavBitDepth = ref(loadSetting('wav_bit_depth', 'FLOAT'))
   const flacBitDepth = ref(loadSetting('flac_bit_depth', 'PCM_24'))
   const mp3BitRate = ref(loadSetting('mp3_bit_rate', '320k'))
@@ -65,6 +66,7 @@ export const useSettingsStore = defineStore('settings', () => {
     separate_task_output_dir: separateTaskOutputDir,
     default_device: defaultDevice, default_format: defaultFormat,
     download_source: downloadSource,
+    max_concurrent_separations: maxConcurrentSeparations,
     wav_bit_depth: wavBitDepth, flac_bit_depth: flacBitDepth,
     mp3_bit_rate: mp3BitRate, m4a_bit_rate: m4aBitRate,
     m4a_codec: m4aCodec,
@@ -135,7 +137,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     themeMode, locale, modelDir, outputDir, separateTaskOutputDir,
-    defaultDevice, defaultFormat, downloadSource,
+    defaultDevice, defaultFormat, downloadSource, maxConcurrentSeparations,
     wavBitDepth, flacBitDepth, mp3BitRate, m4aBitRate, m4aCodec,
     pickModelDir, pickOutputDir,
     deviceOptions, getRuntimeDeviceConfig, getAudioParams,

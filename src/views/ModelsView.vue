@@ -11,9 +11,12 @@ import {
   RefreshOutline,
   CubeOutline,
   TrashOutline,
+  FolderOpenOutline,
+  ServerOutline,
 } from '@vicons/ionicons5'
 import { useModelStore, type ModelEntry } from '@/stores/model'
 import { useSettingsStore } from '@/stores/settings'
+import { useTaskStore } from '@/stores/task'
 import { formatBytes } from '@/utils/format'
 
 const { t, locale } = useI18n()
@@ -21,6 +24,7 @@ const message = useMessage()
 const dialog = useDialog()
 const modelStore = useModelStore()
 const settings = useSettingsStore()
+const taskStore = useTaskStore()
 const {
   filteredModels,
   selectedInfo,
@@ -34,6 +38,8 @@ const {
   detailLoading,
   modelDir,
   downloadTasks,
+  modelStorageSummary,
+  storageLoading,
 } = storeToRefs(modelStore)
 
 const showDetail = computed({
@@ -50,6 +56,11 @@ const downloadedOnly = ref(false)
 const page = ref(1)
 const pageSize = ref(24)
 const pageSizeOptions = [12, 24, 48, 96]
+const showStorage = ref(false)
+const storageSearch = ref('')
+const storageSort = ref<'size-desc' | 'size-asc' | 'name-asc' | 'name-desc'>('size-desc')
+const storageDownloadedOnly = ref(true)
+const selectedStorageModels = ref<string[]>([])
 
 const categoryOptions = computed(() => {
   const all = [{ label: t('common.all'), value: '' }]
@@ -81,6 +92,33 @@ const pagedModels = computed(() => {
   return sortedModels.value.slice(start, start + pageSize.value)
 })
 
+const storageModels = computed(() => {
+  const q = storageSearch.value.trim().toLowerCase()
+  const list = modelStorageSummary.value?.models || []
+  return [...list]
+    .filter((item) => (!storageDownloadedOnly.value || item.downloaded)
+      && (!q || item.name.toLowerCase().includes(q)))
+    .sort((a, b) => {
+      if (storageSort.value === 'size-desc') return b.sizeBytes - a.sizeBytes
+      if (storageSort.value === 'size-asc') return a.sizeBytes - b.sizeBytes
+      if (storageSort.value === 'name-desc') return b.name.localeCompare(a.name)
+      return a.name.localeCompare(b.name)
+    })
+})
+
+const allStorageModelsByName = computed(() => new Map((modelStorageSummary.value?.models || []).map((item) => [item.name, item])))
+
+const selectedStorageBytes = computed(() => selectedStorageModels.value
+  .map((name) => allStorageModelsByName.value.get(name))
+  .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  .reduce((sum, item) => sum + item.sizeBytes, 0))
+
+function setStorageSelected(name: string, checked: boolean) {
+  selectedStorageModels.value = checked
+    ? Array.from(new Set([...selectedStorageModels.value, name]))
+    : selectedStorageModels.value.filter((item) => item !== name)
+}
+
 watch([search, category, supportedOnly, downloadedOnly, pageSize], () => {
   page.value = 1
 })
@@ -94,6 +132,13 @@ function categoryLabel(model: ModelEntry) {
   return locale.value === 'zh-CN' ? (model.categoryCn || model.category) : model.category
 }
 
+function downloadStatusMessage(modelName: string) {
+  const task = downloadTasks.value[modelName]
+  if (!task) return ''
+  if (task.status === 'interrupted') return t('models.downloadInterrupted')
+  return task.message || task.status
+}
+
 async function loadModels() {
   try {
     await modelStore.loadModels()
@@ -102,12 +147,10 @@ async function loadModels() {
   }
 }
 
-async function selectModel(model: ModelEntry) {
-  try {
-    await modelStore.selectModel(model)
-  } catch (err) {
+function selectModel(model: ModelEntry) {
+  void modelStore.selectModel(model).catch((err) => {
     message.error(err instanceof Error ? err.message : String(err))
-  }
+  })
 }
 
 async function downloadModel(model: ModelEntry, event: MouseEvent) {
@@ -143,6 +186,60 @@ function confirmDeleteModel(model: ModelEntry, event?: MouseEvent) {
   })
 }
 
+
+async function openStorageManager() {
+  showStorage.value = true
+  try {
+    await modelStore.loadModelStorageSummary()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
+function openModelDir() {
+  const path = modelStorageSummary.value?.modelDir || modelDir.value || settings.modelDir
+  if (path) void taskStore.revealPath(path)
+}
+
+function confirmBatchDelete() {
+  const names = [...selectedStorageModels.value]
+  if (!names.length) return
+  dialog.warning({
+    title: t('models.storageBatchDeleteConfirmTitle'),
+    content: t('models.storageBatchDeleteConfirmContent', {
+      count: names.length,
+      size: formatBytes(selectedStorageBytes.value),
+    }),
+    positiveText: t('models.storageBatchDelete'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      modelStore.deleteModels(names).then(() => {
+        selectedStorageModels.value = []
+        message.success(t('models.deleteSuccess'))
+      }).catch((err) => message.error(err instanceof Error ? err.message : String(err)))
+    },
+  })
+}
+
+function confirmCleanupResidual() {
+  const summary = modelStorageSummary.value
+  if (!summary?.residualFiles.length) return
+  dialog.warning({
+    title: t('models.storageCleanupConfirmTitle'),
+    content: t('models.storageCleanupConfirmContent', {
+      count: summary.residualFiles.length,
+      size: formatBytes(summary.residualBytes),
+    }),
+    positiveText: t('models.storageCleanup'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      modelStore.cleanupModelResidualFiles().then(() => {
+        message.success(t('models.storageCleanupSuccess'))
+      }).catch((err) => message.error(err instanceof Error ? err.message : String(err)))
+    },
+  })
+}
+
 onMounted(() => {
   if (!modelStore.models.length) void loadModels()
 })
@@ -155,10 +252,16 @@ onMounted(() => {
         <h1>{{ t('models.title') }}</h1>
         <p>{{ t('models.subtitle') }}</p>
       </div>
-      <n-button secondary :loading="isLoading" @click="loadModels">
-        <template #icon><n-icon :component="RefreshOutline" /></template>
-        {{ t('models.load') }}
-      </n-button>
+      <div class="header-actions">
+        <n-button secondary @click="openStorageManager">
+          <template #icon><n-icon :component="ServerOutline" /></template>
+          {{ t('models.storageManage') }}
+        </n-button>
+        <n-button secondary :loading="isLoading" @click="loadModels">
+          <template #icon><n-icon :component="RefreshOutline" /></template>
+          {{ t('models.load') }}
+        </n-button>
+      </div>
     </div>
 
     <!-- Filter Toolbar -->
@@ -282,11 +385,11 @@ onMounted(() => {
             </n-button>
 
             <!-- Download progress -->
-            <div v-else-if="downloadTasks[model.name] && downloadTasks[model.name].status !== 'done'" class="mc-dl">
+            <div v-else-if="!model.downloaded && downloadTasks[model.name] && downloadTasks[model.name].status !== 'done'" class="mc-dl">
               <div class="mc-dl-info">
                 <div class="mc-dl-status">
                   <span :class="['mc-dl-dot', `mc-dl-dot--${downloadTasks[model.name].status}`]" />
-                  <span class="mc-dl-msg">{{ downloadTasks[model.name].message || downloadTasks[model.name].status }}</span>
+                  <span class="mc-dl-msg">{{ downloadStatusMessage(model.name) }}</span>
                 </div>
                 <span class="mc-dl-pct">{{ downloadTasks[model.name].progress }}%</span>
               </div>
@@ -296,7 +399,7 @@ onMounted(() => {
                 :height="8"
                 :border-radius="4"
                 type="line"
-                :color="downloadTasks[model.name].status === 'error' ? 'var(--danger)' : 'var(--primary)'"
+                :color="downloadTasks[model.name].status === 'error' ? 'var(--danger)' : downloadTasks[model.name].status === 'interrupted' ? 'var(--warning)' : 'var(--primary)'"
                 :rail-color="'var(--surface-3)'"
               />
               <div v-if="downloadTasks[model.name].totalFiles > 1" class="mc-dl-files">
@@ -312,14 +415,14 @@ onMounted(() => {
                 >
                   {{ t('common.cancel') }}
                 </n-button>
-                <template v-else-if="['paused','cancelled','error'].includes(downloadTasks[model.name].status)">
+                <template v-else-if="['paused','cancelled','error','interrupted'].includes(downloadTasks[model.name].status)">
                   <n-button
                     size="tiny"
                     type="primary"
                     style="flex:1"
                     @click="downloadModel(model, $event)"
                   >
-                    {{ t('common.resume') }}
+                    {{ downloadTasks[model.name]?.status === 'interrupted' ? t('models.continueDownload') : t('common.resume') }}
                   </n-button>
                   <n-button
                     size="tiny"
@@ -444,13 +547,13 @@ onMounted(() => {
               {{ t('common.cancel') }}
             </n-button>
             <!-- Paused/Cancelled/Error: show resume + delete -->
-            <template v-if="downloadTasks[selectedInfo.name] && ['paused','cancelled','error'].includes(downloadTasks[selectedInfo.name]!.status)">
+            <template v-if="!selectedInfo.downloaded && downloadTasks[selectedInfo.name] && ['paused','cancelled','error','interrupted'].includes(downloadTasks[selectedInfo.name]!.status)">
               <n-button
                 block
                 type="primary"
                 @click="downloadModel(selectedInfo!, $event)"
               >
-                {{ t('common.resume') }}
+                {{ selectedInfo && downloadTasks[selectedInfo.name]?.status === 'interrupted' ? t('models.continueDownload') : t('common.resume') }}
               </n-button>
               <n-button
                 block
@@ -484,6 +587,106 @@ onMounted(() => {
             </template>
           </div>
         </template>
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer v-model:show="showStorage" :width="760" placement="right">
+      <n-drawer-content :title="t('models.storageTitle')" closable>
+        <div class="storage-panel">
+          <div class="storage-summary">
+            <div class="storage-stat">
+              <span>{{ t('models.storageTotal') }}</span>
+              <strong>{{ formatBytes(modelStorageSummary?.totalBytes || 0) }}</strong>
+            </div>
+            <div class="storage-stat">
+              <span>{{ t('models.storageDownloadedCount') }}</span>
+              <strong>{{ modelStorageSummary?.downloadedCount || 0 }}</strong>
+            </div>
+            <div class="storage-stat">
+              <span>{{ t('models.storageResidual') }}</span>
+              <strong>{{ formatBytes(modelStorageSummary?.residualBytes || 0) }}</strong>
+            </div>
+          </div>
+
+          <div class="storage-dir">
+            <span class="text-muted">{{ t('models.modelDir') }}:</span>
+            <code>{{ modelStorageSummary?.modelDir || modelDir || settings.modelDir || '?' }}</code>
+          </div>
+
+          <div class="storage-toolbar">
+            <n-input v-model:value="storageSearch" :placeholder="t('models.storageSearch')" clearable>
+              <template #prefix><n-icon :component="SearchOutline" /></template>
+            </n-input>
+            <n-select
+              v-model:value="storageSort"
+              :options="[
+                { label: t('models.storageSortSizeDesc'), value: 'size-desc' },
+                { label: t('models.storageSortSizeAsc'), value: 'size-asc' },
+                { label: t('models.storageSortNameAsc'), value: 'name-asc' },
+                { label: t('models.storageSortNameDesc'), value: 'name-desc' },
+              ]"
+              style="width:160px"
+            />
+            <n-switch v-model:value="storageDownloadedOnly" size="small" />
+            <span class="text-sm text-muted">{{ t('models.downloadedOnly') }}</span>
+          </div>
+
+          <div class="storage-actions">
+            <n-button size="small" secondary :loading="storageLoading" @click="modelStore.loadModelStorageSummary()">
+              <template #icon><n-icon :component="RefreshOutline" /></template>
+              {{ t('models.storageRefresh') }}
+            </n-button>
+            <n-button size="small" secondary @click="openModelDir">
+              <template #icon><n-icon :component="FolderOpenOutline" /></template>
+              {{ t('models.openModelDir') }}
+            </n-button>
+            <n-button
+              size="small"
+              type="error"
+              secondary
+              :disabled="!selectedStorageModels.length"
+              @click="confirmBatchDelete"
+            >
+              {{ t('models.storageBatchDelete') }}
+              <span v-if="selectedStorageModels.length">（{{ selectedStorageModels.length }} / {{ formatBytes(selectedStorageBytes) }}）</span>
+            </n-button>
+            <n-button
+              size="small"
+              type="warning"
+              secondary
+              :disabled="!(modelStorageSummary?.residualFiles.length)"
+              @click="confirmCleanupResidual"
+            >
+              {{ t('models.storageCleanup') }}
+            </n-button>
+          </div>
+
+          <div class="storage-list">
+            <label
+              v-for="item in storageModels"
+              :key="item.name"
+              class="storage-row"
+            >
+              <n-checkbox
+                :checked="selectedStorageModels.includes(item.name)"
+                :disabled="item.sizeBytes <= 0"
+                @update:checked="(checked: boolean) => setStorageSelected(item.name, checked)"
+              />
+              <div class="storage-row__main">
+                <strong>{{ item.name }}</strong>
+                <span>{{ item.files.filter((file) => file.exists).length }} files</span>
+              </div>
+              <n-tag size="small" :bordered="false" :type="item.downloaded ? 'success' : 'default'">
+                {{ item.downloaded ? t('models.downloaded') : t('models.notDownloaded') }}
+              </n-tag>
+              <strong class="storage-row__size">{{ formatBytes(item.sizeBytes || item.expectedSizeBytes) }}</strong>
+            </label>
+            <div v-if="!storageModels.length" class="empty-state storage-empty">
+              <n-icon :component="CubeOutline" size="36" color="var(--on-surface-muted)" />
+              <span class="text-muted">{{ t('models.searchEmpty') }}</span>
+            </div>
+          </div>
+        </div>
       </n-drawer-content>
     </n-drawer>
   </div>
@@ -696,7 +899,8 @@ onMounted(() => {
 }
 
 .mc-dl-dot--paused,
-.mc-dl-dot--cancelled {
+.mc-dl-dot--cancelled,
+.mc-dl-dot--interrupted {
   background: var(--warning);
   animation: none;
 }
@@ -823,6 +1027,118 @@ onMounted(() => {
   padding: 8px 10px;
   border-radius: 8px;
   display: block;
+}
+
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.storage-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.storage-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.storage-stat {
+  padding: 14px;
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+
+.storage-stat span {
+  display: block;
+  font-size: 12px;
+  color: var(--on-surface-muted);
+}
+
+.storage-stat strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.storage-dir {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.storage-dir code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-muted);
+}
+
+.storage-toolbar,
+.storage-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.storage-toolbar .n-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.storage-list {
+  display: grid;
+  gap: 8px;
+  max-height: 56vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.storage-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--outline);
+  background: var(--surface-1);
+}
+
+.storage-row__main {
+  min-width: 0;
+}
+
+.storage-row__main strong,
+.storage-row__main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-row__main span {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--on-surface-muted);
+}
+
+.storage-row__size {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.storage-empty {
+  padding: 32px 0;
 }
 
 /* ===== Responsive ===== */

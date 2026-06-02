@@ -7,6 +7,24 @@ import { useModelStore } from '@/stores/model'
 export type TaskStatus = 'queued' | 'preparing' | 'validating_input' | 'downloading_model' | 'ensuring_model' | 'loading_model' | 'separating' | 'writing_output' | 'done' | 'failed' | 'cancelled'
 
 export type StemOutput = { stem: string; path: string }
+
+export type SeparationRunConfig = {
+  modelDir: string | null
+  downloadSource: string
+  device: string
+  deviceIds: number[]
+  outputFormat: string
+  useTta: boolean
+  debug: boolean
+  audioParams: Record<string, string | number>
+  inferenceParams: Record<string, unknown>
+}
+
+type ScanAudioPathsResult = {
+  files: string[]
+  warnings: string[]
+}
+
 export type SeparationTask = {
   id: string
   model: string
@@ -22,6 +40,7 @@ export type SeparationTask = {
   outputs: StemOutput[]
   logs: string[]
   error?: string
+  runConfig?: SeparationRunConfig
 }
 
 const HISTORY_KEY = 'pymss:tasks'
@@ -30,10 +49,6 @@ const AUDIO_EXTENSIONS = ['wav', 'mp3', 'flac', 'm4a', 'aac', 'ogg', 'opus']
 function isAudioPath(path: string) {
   const ext = path.split('.').pop()?.toLowerCase() || ''
   return AUDIO_EXTENSIONS.includes(ext)
-}
-
-function looksLikeFile(path: string) {
-  return /\.[^/\\.]+$/.test(path)
 }
 
 function loadHistory(): SeparationTask[] {
@@ -48,6 +63,7 @@ function loadHistory(): SeparationTask[] {
 }
 
 const TERMINAL_STATUSES: TaskStatus[] = ['done', 'failed', 'cancelled']
+const INTERRUPTIBLE_STATUSES: TaskStatus[] = ['queued', 'preparing', 'validating_input', 'downloading_model', 'ensuring_model', 'loading_model', 'separating', 'writing_output']
 
 const STAGE_META: Record<TaskStatus, { progress: number; label: string }> = {
   queued: { progress: 2, label: 'Queued' },
@@ -97,7 +113,12 @@ function outputsFromFiles(outputDir: string, files: string[], outputFormat = 'wa
 }
 
 function normalizeTask(task: Partial<SeparationTask>): SeparationTask {
-  const status = normalizeStatus(task.status)
+  let status = normalizeStatus(task.status)
+  let interrupted = false
+  if (INTERRUPTIBLE_STATUSES.includes(status)) {
+    status = 'failed'
+    interrupted = true
+  }
   const meta = STAGE_META[status]
   const progress = typeof task.progress === 'number'
     ? Math.max(meta.progress, Math.min(100, task.progress))
@@ -108,15 +129,18 @@ function normalizeTask(task: Partial<SeparationTask>): SeparationTask {
     input: task.input || '',
     output: normalizeOutputPath(task.output),
     status,
-    message: task.message || meta.label,
+    message: interrupted ? '上次运行未完成' : (task.message || meta.label),
     createdAt: task.createdAt || Date.now(),
     updatedAt: task.updatedAt || task.createdAt || Date.now(),
     progress: TERMINAL_STATUSES.includes(status) ? 100 : progress,
-    stageLabel: task.stageLabel || meta.label,
+    stageLabel: interrupted ? '已中断' : (task.stageLabel || meta.label),
     files: task.files || [],
     outputs: task.outputs || [],
-    logs: task.logs || [],
-    error: task.error,
+    logs: interrupted
+      ? [...(task.logs || []), `${new Date().toLocaleTimeString()} 应用关闭或重启，任务已标记为中断。`].slice(-300)
+      : (task.logs || []),
+    error: interrupted ? '应用关闭或重启导致任务中断' : task.error,
+    runConfig: task.runConfig,
   }
 }
 
@@ -148,6 +172,7 @@ export const useTaskStore = defineStore('task', () => {
   const activeTask = computed(() => tasks.value.find((task) => task.id === activeTaskId.value) || null)
   const completedTasks = computed(() => tasks.value.filter((task) => task.status === 'done'))
   const runningTasks = computed(() => tasks.value.filter((task) => !TERMINAL_STATUSES.includes(task.status)))
+  const activeWorkerTasks = computed(() => tasks.value.filter((task) => !TERMINAL_STATUSES.includes(task.status) && task.status !== 'queued'))
   const resultTasks = computed(() => completedTasks.value.filter((task) => task.outputs.length || task.files.length))
   const queuedTasks = computed(() => tasks.value.filter((task) => task.status === 'queued'))
   const failedTasks = computed(() => tasks.value.filter((task) => task.status === 'failed'))
@@ -158,6 +183,11 @@ export const useTaskStore = defineStore('task', () => {
     const persistable = value.slice(0, 80).map((task) => ({ ...task, logs: task.logs.slice(-120) }))
     localStorage.setItem(HISTORY_KEY, JSON.stringify(persistable))
   }, { deep: true })
+
+
+  watch(() => useSettingsStore().maxConcurrentSeparations, () => {
+    scheduleQueue()
+  })
 
   function touch(task: SeparationTask) {
     task.updatedAt = Date.now()
@@ -173,6 +203,104 @@ export const useTaskStore = defineStore('task', () => {
     task.logs.push(...normalized)
     task.logs = task.logs.slice(-300)
     touch(task)
+  }
+
+  function maxConcurrentSeparations() {
+    const settings = useSettingsStore()
+    const value = Number(settings.maxConcurrentSeparations || 1)
+    if (!Number.isFinite(value)) return 1
+    return Math.min(3, Math.max(1, Math.trunc(value)))
+  }
+
+  function buildRunConfig(inferenceParams: Record<string, unknown>): SeparationRunConfig {
+    const settings = useSettingsStore()
+    const runtimeDevice = settings.getRuntimeDeviceConfig()
+    return {
+      modelDir: settings.modelDir || null,
+      downloadSource: settings.downloadSource,
+      device: runtimeDevice.device,
+      deviceIds: runtimeDevice.deviceIds,
+      outputFormat: settings.defaultFormat,
+      useTta: useTta.value,
+      debug: debug.value,
+      audioParams: settings.getAudioParams(),
+      inferenceParams,
+    }
+  }
+
+  function createQueuedTask(input: string, model: string, inferenceParams: Record<string, unknown>) {
+    const settings = useSettingsStore()
+    const id = `sep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    const task: SeparationTask = {
+      id,
+      model,
+      input,
+      output: resolveTaskOutputPath(settings.outputDir, id, settings.separateTaskOutputDir),
+      status: 'queued',
+      message: 'Queued',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      progress: STAGE_META.queued.progress,
+      stageLabel: STAGE_META.queued.label,
+      files: [],
+      outputs: [],
+      logs: [`${new Date().toLocaleTimeString()} Queued`],
+      runConfig: buildRunConfig(inferenceParams),
+    }
+    tasks.value.unshift(task)
+    activeTaskId.value = id
+    return task
+  }
+
+  async function startQueuedTask(taskId: string) {
+    const task = tasks.value.find((item) => item.id === taskId)
+    if (!task || task.status !== 'queued') return false
+    const settings = useSettingsStore()
+    const config = task.runConfig || buildRunConfig({})
+    setTaskStatus(task.id, 'preparing', 'Preparing task')
+    try {
+      await invoke<{ taskId: string; started: boolean }>('start_separation', {
+        payload: {
+          taskId: task.id,
+          model: task.model,
+          input: task.input,
+          output: task.output,
+          modelDir: config.modelDir ?? (settings.modelDir || null),
+          download: true,
+          source: config.downloadSource || settings.downloadSource,
+          endpoint: null,
+          device: config.device,
+          deviceIds: config.deviceIds,
+          outputFormat: config.outputFormat,
+          useTta: config.useTta,
+          debug: config.debug,
+          audioParams: config.audioParams,
+          inferenceParams: config.inferenceParams || {},
+        },
+      })
+      return true
+    } catch (err) {
+      task.status = 'failed'
+      task.error = err instanceof Error ? err.message : String(err)
+      task.message = task.error
+      task.stageLabel = STAGE_META.failed.label
+      task.progress = 100
+      appendTaskLogs(task, `error: ${task.error}`)
+      scheduleQueue()
+      return false
+    }
+  }
+
+  function scheduleQueue() {
+    const available = maxConcurrentSeparations() - activeWorkerTasks.value.length
+    if (available <= 0) return
+    const nextTasks = tasks.value
+      .filter((task) => task.status === 'queued')
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, available)
+    nextTasks.forEach((task) => {
+      void startQueuedTask(task.id)
+    })
   }
 
   function setTaskStatus(id: string, status: TaskStatus, message?: string, progress?: number) {
@@ -208,11 +336,17 @@ export const useTaskStore = defineStore('task', () => {
       const code = event.payload?.code ? `[${event.payload.code}] ` : ''
       const message = event.payload?.message || 'Unknown error'
       const detail = event.payload?.detail || ''
-      task.status = 'failed'
+      const recoverable = Boolean(event.payload?.recoverable)
       task.error = message
       task.message = message
-      task.stageLabel = STAGE_META.failed.label
-      task.progress = 100
+      if (recoverable) {
+        task.stageLabel = task.stageLabel || STAGE_META.failed.label
+        task.progress = Math.min(99, Math.max(task.progress || 0, 1))
+      } else {
+        task.status = 'failed'
+        task.stageLabel = STAGE_META.failed.label
+        task.progress = 100
+      }
       appendTaskLogs(task, [`error: ${code}${message}`, detail ? `traceback:
 ${detail}` : ''])
     } else if (event.type === 'task_done') {
@@ -234,6 +368,7 @@ ${detail}` : ''])
       task.progress = 100
       touch(task)
     }
+    if (TERMINAL_STATUSES.includes(task.status)) scheduleQueue()
   }
 
   // 将一批路径加入候选列表（去重，仅保留音频文件）。返回实际新增数量。
@@ -262,27 +397,22 @@ ${detail}` : ''])
   }
 
   // 选择输入文件夹：扫描其中音频文件加入候选列表，返回扫描到的数量
+  async function scanAndAddPaths(paths: string[]) {
+    if (!paths?.length) return { added: 0, warnings: [] as string[] }
+    const result = await invoke<ScanAudioPathsResult>('scan_audio_paths', { paths })
+    return { added: addInputFiles(result.files || []), warnings: result.warnings || [] }
+  }
+
   async function pickInputFolder() {
     const folder = await invoke<string | null>('pick_input_folder')
     if (!folder) return 0
-    const files = await invoke<string[]>('list_audio_files', { path: folder })
-    addInputFiles(files || [])
-    return files?.length || 0
+    const result = await scanAndAddPaths([folder])
+    return result.added
   }
 
-  // 拖拽/外部传入：文件夹会先扫描，文件直接加入。返回新增数量
   async function addPaths(paths: string[]) {
-    if (!paths?.length) return 0
-    const files: string[] = []
-    for (const p of paths) {
-      if (looksLikeFile(p)) {
-        files.push(p)
-      } else {
-        const scanned = await invoke<string[]>('list_audio_files', { path: p })
-        files.push(...(scanned || []))
-      }
-    }
-    return addInputFiles(files)
+    const result = await scanAndAddPaths(paths)
+    return result.added
   }
 
   async function revealPath(path: string) {
@@ -317,14 +447,25 @@ ${detail}` : ''])
   }
 
   async function cancelTask(id: string) {
-    const cancelled = await invoke<boolean>('cancel_task', { taskId: id })
     const task = tasks.value.find((item) => item.id === id)
-    if (task && cancelled) {
+    if (!task) return false
+    if (task.status === 'queued') {
+      task.status = 'cancelled'
+      task.message = 'Cancelled'
+      task.stageLabel = STAGE_META.cancelled.label
+      task.progress = 100
+      appendTaskLogs(task, 'Cancelled before execution')
+      scheduleQueue()
+      return true
+    }
+    const cancelled = await invoke<boolean>('cancel_task', { taskId: id })
+    if (cancelled) {
       task.status = 'cancelled'
       task.message = 'Cancelled'
       task.stageLabel = STAGE_META.cancelled.label
       task.progress = 100
       touch(task)
+      scheduleQueue()
     }
     return cancelled
   }
@@ -347,62 +488,10 @@ ${detail}` : ''])
     return inferenceParams
   }
 
-  // 为单个输入文件提交一个分离任务
-  async function submitOne(input: string, model: string, inferenceParams: Record<string, unknown>) {
-    const settings = useSettingsStore()
-    const id = `sep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-    const task: SeparationTask = {
-      id,
-      model,
-      input,
-      output: resolveTaskOutputPath(settings.outputDir, id, settings.separateTaskOutputDir),
-      status: 'queued',
-      message: 'Queued',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      progress: STAGE_META.queued.progress,
-      stageLabel: STAGE_META.queued.label,
-      files: [],
-      outputs: [],
-      logs: [],
-    }
-    tasks.value.unshift(task)
-    activeTaskId.value = id
-    setTaskStatus(id, 'preparing', 'Preparing task')
-    const runtimeDevice = settings.getRuntimeDeviceConfig()
-    try {
-      await invoke<{ taskId: string; started: boolean }>('start_separation', {
-        payload: {
-          taskId: id,
-          model: task.model,
-          input: task.input,
-          output: task.output,
-          modelDir: settings.modelDir || null,
-          download: true,
-          source: settings.downloadSource,
-          endpoint: null,
-          device: runtimeDevice.device,
-          deviceIds: runtimeDevice.deviceIds,
-          outputFormat: settings.defaultFormat,
-          useTta: useTta.value,
-          debug: debug.value,
-          audioParams: settings.getAudioParams(),
-          inferenceParams,
-        },
-      })
-      return task
-    } catch (err) {
-      task.status = 'failed'
-      task.error = err instanceof Error ? err.message : String(err)
-      task.message = task.error
-      task.stageLabel = STAGE_META.failed.label
-      task.progress = 100
-      appendTaskLogs(task, `error: ${task.error}`)
-      throw err
-    }
+  function submitOne(input: string, model: string, inferenceParams: Record<string, unknown>) {
+    return createQueuedTask(input, model, inferenceParams)
   }
 
-  // 批量启动：为候选列表中每个文件创建任务。返回成功/失败计数。
   async function startSeparation() {
     const modelStore = useModelStore()
     if (!inputFiles.value.length) {
@@ -414,81 +503,20 @@ ${detail}` : ''])
     const model = modelStore.selectedModel
     const inferenceParams = buildInferenceParams()
     const targets = [...inputFiles.value]
-    let succeeded = 0
-    let failed = 0
-    let lastError: unknown = null
-    for (const input of targets) {
-      try {
-        await submitOne(input, model, inferenceParams)
-        succeeded += 1
-      } catch (err) {
-        failed += 1
-        lastError = err
-      }
-    }
-    // 全部失败时抛出，便于上层提示
-    if (succeeded === 0 && failed > 0) {
-      throw lastError instanceof Error ? lastError : new Error(String(lastError))
-    }
-    return { succeeded, failed, total: targets.length }
+    targets.forEach((input) => submitOne(input, model, inferenceParams))
+    scheduleQueue()
+    return { succeeded: targets.length, failed: 0, total: targets.length }
   }
 
   async function retryTask(taskId: string) {
     const existing = tasks.value.find(t => t.id === taskId)
     if (!existing) return
-    const id = `sep_${Date.now()}`
-    const settings = useSettingsStore()
     const modelStore = useModelStore()
-    const task: SeparationTask = {
-      id,
-      model: existing.model,
-      input: existing.input,
-      output: resolveTaskOutputPath(settings.outputDir, id, settings.separateTaskOutputDir),
-      status: 'queued',
-      message: 'Queued',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      progress: STAGE_META.queued.progress,
-      stageLabel: STAGE_META.queued.label,
-      files: [],
-      outputs: [],
-      logs: [],
-    }
-    tasks.value.unshift(task)
-    activeTaskId.value = id
-    setTaskStatus(id, 'preparing', 'Preparing task')
-    try {
-      modelStore.selectedModel = existing.model
-      const runtimeDevice = settings.getRuntimeDeviceConfig()
-      await invoke<{ taskId: string; started: boolean }>('start_separation', {
-        payload: {
-          taskId: id,
-          model: task.model,
-          input: task.input,
-          output: task.output,
-          modelDir: settings.modelDir || null,
-          download: true,
-          source: settings.downloadSource,
-          endpoint: null,
-          device: runtimeDevice.device,
-          deviceIds: runtimeDevice.deviceIds,
-          outputFormat: settings.defaultFormat,
-          useTta: useTta.value,
-          debug: debug.value,
-          audioParams: settings.getAudioParams(),
-          inferenceParams: {},
-        },
-      })
-      return task
-    } catch (err) {
-      task.status = 'failed'
-      task.error = err instanceof Error ? err.message : String(err)
-      task.message = task.error
-      task.stageLabel = STAGE_META.failed.label
-      task.progress = 100
-      appendTaskLogs(task, `error: ${task.error}`)
-      throw err
-    }
+    modelStore.selectedModel = existing.model
+    const retryParams = existing.runConfig?.inferenceParams || {}
+    const task = createQueuedTask(existing.input, existing.model, retryParams)
+    scheduleQueue()
+    return task
   }
 
   return {
@@ -497,6 +525,7 @@ ${detail}` : ''])
     activeTask,
     completedTasks,
     runningTasks,
+    activeWorkerTasks,
     resultTasks,
     queuedTasks,
     failedTasks,
@@ -537,5 +566,6 @@ ${detail}` : ''])
     cancelTask,
     startSeparation,
     retryTask,
+    scheduleQueue,
   }
 })

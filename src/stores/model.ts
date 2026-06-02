@@ -39,12 +39,13 @@ type ModelsPayload = {
 }
 
 const MODEL_CACHE_KEY = 'pymss:model_catalog_cache'
+const MODEL_DOWNLOAD_TASKS_KEY = 'pymss:model_download_tasks'
 
-type DownloadStatus = 'idle' | 'downloading' | 'done' | 'error'
-type DownloadTask = {
+type DownloadStatus = 'idle' | 'downloading' | 'done' | 'error' | 'cancelled' | 'paused' | 'interrupted'
+export type DownloadTask = {
   taskId: string
   model: string
-  status: DownloadStatus | 'cancelled' | 'paused'
+  status: DownloadStatus
   progress: number
   message: string
   completedFiles: number
@@ -52,6 +53,49 @@ type DownloadTask = {
   updatedAt: number
 }
 
+export type ModelStorageFile = { path: string; sizeBytes: number; exists?: boolean }
+export type ModelStorageItem = {
+  name: string
+  downloaded: boolean
+  sizeBytes: number
+  expectedSizeBytes: number
+  files: ModelStorageFile[]
+}
+export type ModelStorageSummary = {
+  modelDir: string
+  totalBytes: number
+  downloadedCount: number
+  models: ModelStorageItem[]
+  residualFiles: ModelStorageFile[]
+  residualBytes: number
+}
+
+
+
+function loadDownloadTasks(): Record<string, DownloadTask> {
+  try {
+    const raw = localStorage.getItem(MODEL_DOWNLOAD_TASKS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, DownloadTask>
+    const next: Record<string, DownloadTask> = {}
+    Object.entries(parsed || {}).forEach(([name, task]) => {
+      if (!task?.model) return
+      next[name] = {
+        ...task,
+        status: task.status === 'downloading' ? 'interrupted' : task.status,
+        message: task.status === 'downloading' ? '下载已中断' : task.message,
+        updatedAt: Date.now(),
+      }
+    })
+    return next
+  } catch {
+    return {}
+  }
+}
+
+function saveDownloadTasks(tasks: Record<string, DownloadTask>) {
+  localStorage.setItem(MODEL_DOWNLOAD_TASKS_KEY, JSON.stringify(tasks))
+}
 
 function loadModelCache(): Partial<ModelsPayload> | null {
   try {
@@ -89,8 +133,10 @@ export const useModelStore = defineStore('model', () => {
   const category = ref('')
   const downloadStates = ref<Record<string, DownloadStatus>>({})
   const downloadErrors = ref<Record<string, string>>({})
-  const downloadTasks = ref<Record<string, DownloadTask>>({})
+  const downloadTasks = ref<Record<string, DownloadTask>>(loadDownloadTasks())
   const downloadTaskIndex = ref<Record<string, string>>({})
+  const modelStorageSummary = ref<ModelStorageSummary | null>(null)
+  const storageLoading = ref(false)
   const cached = loadModelCache()
   if (cached?.models?.length) {
     models.value = cached.models as ModelEntry[]
@@ -98,6 +144,15 @@ export const useModelStore = defineStore('model', () => {
     categoriesCn.value = cached.categoriesCn || []
     modelDir.value = cached.modelDir || ''
   }
+
+  Object.values(downloadTasks.value).forEach((task) => {
+    downloadTaskIndex.value[task.taskId] = task.model
+    if (task.status === 'downloading') downloadStates.value[task.model] = 'downloading'
+    if (task.status === 'error') downloadStates.value[task.model] = 'error'
+  })
+
+  watch(downloadTasks, (value) => saveDownloadTasks(value), { deep: true })
+
 
   watch(supportedOnly, () => {
     if (selectedInfo.value && !filteredModels.value.some((item) => item.name === selectedInfo.value?.name)) {
@@ -173,7 +228,7 @@ export const useModelStore = defineStore('model', () => {
     }
   }
 
-  async function selectModel(modelOrName: string | ModelEntry) {
+  function selectModel(modelOrName: string | ModelEntry) {
     const settings = useSettingsStore()
     const name = typeof modelOrName === 'string' ? modelOrName : modelOrName.name
     selectedModel.value = name
@@ -184,19 +239,22 @@ export const useModelStore = defineStore('model', () => {
     if (listEntry) selectedInfo.value = listEntry
 
     detailLoading.value = true
-    try {
-      const info = await invoke<ModelEntry>('get_model_info', {
-        payload: {
-          model: name,
-          modelDir: settings.modelDir || null,
-        },
-      })
+    return invoke<ModelEntry>('get_model_info', {
+      payload: {
+        model: name,
+        modelDir: settings.modelDir || null,
+      },
+    }).then((info) => {
       if (selectedModel.value === name) selectedInfo.value = info
       return info
-    } finally {
+    }).catch((err) => {
+      error.value = err instanceof Error ? err.message : String(err)
+      throw err
+    }).finally(() => {
       if (selectedModel.value === name) detailLoading.value = false
-    }
+    })
   }
+
 
   function handleWorkerEvent(event: any) {
     const taskId = event?.taskId as string | undefined
@@ -337,6 +395,43 @@ export const useModelStore = defineStore('model', () => {
     }
   }
 
+  async function deleteModels(names: string[]) {
+    for (const name of names) {
+      await deleteModel(name)
+    }
+    await loadModelStorageSummary()
+  }
+
+  async function loadModelStorageSummary() {
+    const settings = useSettingsStore()
+    storageLoading.value = true
+    try {
+      const result = await invoke<ModelStorageSummary>('get_model_storage_summary', {
+        payload: { modelDir: settings.modelDir || null },
+      })
+      modelStorageSummary.value = result
+      return result
+    } finally {
+      storageLoading.value = false
+    }
+  }
+
+  async function cleanupModelResidualFiles() {
+    const settings = useSettingsStore()
+    storageLoading.value = true
+    try {
+      const result = await invoke<any>('cleanup_model_residual_files', {
+        payload: { modelDir: settings.modelDir || null },
+      })
+      const summary = result?.modelStorageSummary || result?.payload?.modelStorageSummary || result
+      if (summary?.models) modelStorageSummary.value = summary
+      return result
+    } finally {
+      storageLoading.value = false
+    }
+  }
+
+
   return {
     models,
     categories,
@@ -353,6 +448,8 @@ export const useModelStore = defineStore('model', () => {
     downloadStates,
     downloadErrors,
     downloadTasks,
+    modelStorageSummary,
+    storageLoading,
     filteredModels,
     downloadedModels,
     loadModels,
@@ -360,6 +457,9 @@ export const useModelStore = defineStore('model', () => {
     deleteModel,
     downloadModel,
     cancelDownload,
+    deleteModels,
+    loadModelStorageSummary,
+    cleanupModelResidualFiles,
     handleWorkerEvent,
   }
 })

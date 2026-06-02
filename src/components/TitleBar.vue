@@ -6,25 +6,28 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const route = useRoute()
 const { t } = useI18n()
-const appWindow = getCurrentWindow()
+const hasTauriWindow = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+const appWindow = hasTauriWindow ? getCurrentWindow() : null
 const isMaximized = ref(false)
 
 const pageTitle = computed(() => t(`nav.${String(route.name || 'home')}`))
 
 async function refreshMaximized() {
+  if (!appWindow) { isMaximized.value = false; return }
   try { isMaximized.value = await appWindow.isMaximized() } catch { isMaximized.value = false }
 }
-function minimize() { appWindow.minimize().catch(() => {}) }
-function toggleMaximize() { appWindow.toggleMaximize().then(refreshMaximized).catch(() => {}) }
-function close() { appWindow.close().catch(() => {}) }
+function minimize() { appWindow?.minimize().catch(() => {}) }
+function toggleMaximize() { appWindow?.toggleMaximize().then(refreshMaximized).catch(() => {}) }
+function close() { appWindow?.close().catch(() => {}) }
 function startDrag(event: MouseEvent) {
   if (event.detail > 1) { toggleMaximize(); return }
-  appWindow.startDragging().catch(() => {})
+  appWindow?.startDragging().catch(() => {})
 }
 
 let unlisten: (() => void) | undefined
 onMounted(async () => {
   await refreshMaximized()
+  if (!appWindow) return
   try { unlisten = await appWindow.onResized(refreshMaximized) } catch {}
 })
 onUnmounted(() => unlisten?.())

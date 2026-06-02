@@ -14,15 +14,17 @@ const settings = useSettingsStore()
 const app = useAppStore()
 const { t } = useI18n()
 const bootReady = ref(false)
+const hasTauriWindow = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 const isDark = computed(() => resolvedIsDark(settings.themeMode))
+const isEditorRoute = computed(() => location.hash.startsWith('#/editor'))
 
 // Naive UI's seemly/rgba() requires actual CSS color values (not var() references)
 
 onMounted(() => {
   requestAnimationFrame(() => {
     bootReady.value = true
-    getCurrentWindow().show().catch(() => {})
+    if (hasTauriWindow) getCurrentWindow().show().catch(() => {})
   })
   if (!app.envInfo && !app.envLoading) {
     setTimeout(() => {
@@ -133,11 +135,11 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
     <n-notification-provider>
       <n-message-provider>
         <n-dialog-provider>
-        <div class="app-shell">
+        <div class="app-shell" :class="{ 'app-shell--editor': isEditorRoute }">
           <div class="app-backdrop" />
           <TitleBar />
           <div class="app-body">
-            <SideNav />
+            <SideNav v-if="!isEditorRoute" />
             <main class="app-content">
               <router-view v-slot="{ Component, route }">
                 <transition name="page" mode="out-in">

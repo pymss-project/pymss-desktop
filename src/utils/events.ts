@@ -4,9 +4,10 @@ import { useTaskStore } from '@/stores/task'
 import { useModelStore } from '@/stores/model'
 
 let registered = false
+const hasTauriEventApi = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export function registerWorkerEvents() {
-  if (registered) return
+  if (registered || !hasTauriEventApi) return
   registered = true
   listen('pymss://worker-event', (event) => {
     const app = useAppStore()
