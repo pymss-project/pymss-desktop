@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { EditorSession, EditorSource } from '@/types/editor'
 import { formatTime } from '@/utils/editorTime'
@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  renameTrack: [trackId: string, name: string]
+  renameTrack: [trackId: string, name: string, commit?: boolean]
   toggleTrackFlag: [trackId: string, flag: 'muted' | 'solo']
   setTrackVolume: [trackId: string, value: number]
   beginTrackVolume: []
@@ -25,6 +25,20 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const selectedTrack = computed(() => props.session.tracks.find((track) => track.id === props.selectedTrackId) || null)
+const renameDraft = ref('')
+
+watch(
+  selectedTrack,
+  (track) => {
+    renameDraft.value = track?.name || ''
+  },
+  { immediate: true },
+)
+
+function commitRename() {
+  if (!selectedTrack.value) return
+  emit('renameTrack', selectedTrack.value.id, renameDraft.value, true)
+}
 
 function shortPath(path: string) {
   if (!path) return ''
@@ -60,7 +74,12 @@ function formatTrackVolume(value: number) {
       <section v-if="selectedTrack" class="panel panel--track">
         <label class="panel-field">
           <span class="panel-field__label">{{ t('editor.inspectorFieldName') }}</span>
-          <n-input :value="selectedTrack!.name" size="small" @update:value="(value: string) => emit('renameTrack', selectedTrack!.id, value)" />
+          <n-input
+            v-model:value="renameDraft"
+            size="small"
+            @blur="commitRename"
+            @keydown.enter.prevent="commitRename"
+          />
         </label>
 
         <div class="track-strip">

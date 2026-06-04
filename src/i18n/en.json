@@ -38,6 +38,8 @@
     "confirm": "Confirm",
     "notSet": "Not set",
     "clear": "Clear",
+    "expand": "Expand",
+    "collapse": "Collapse",
     "minimize": "Minimize",
     "maximize": "Maximize",
     "close": "Close"

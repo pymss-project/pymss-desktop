@@ -7,14 +7,12 @@ import SideNav from '@/components/SideNav.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAppStore } from '@/stores/app'
 import { resolvedIsDark } from '@/utils/theme'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from 'vue-i18n'
 
 const settings = useSettingsStore()
 const app = useAppStore()
 const { t } = useI18n()
 const bootReady = ref(false)
-const hasTauriWindow = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 const isDark = computed(() => resolvedIsDark(settings.themeMode))
 const isEditorRoute = computed(() => location.hash.startsWith('#/editor'))
@@ -23,8 +21,9 @@ const isEditorRoute = computed(() => location.hash.startsWith('#/editor'))
 
 onMounted(() => {
   requestAnimationFrame(() => {
-    bootReady.value = true
-    if (hasTauriWindow) getCurrentWindow().show().catch(() => {})
+    window.setTimeout(() => {
+      bootReady.value = true
+    }, 120)
   })
   if (!app.envInfo && !app.envLoading) {
     setTimeout(() => {
@@ -209,7 +208,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 
 .boot-fade-enter-active,
 .boot-fade-leave-active {
-  transition: opacity 180ms ease;
+  transition: opacity 240ms ease;
 }
 
 .boot-fade-enter-from,

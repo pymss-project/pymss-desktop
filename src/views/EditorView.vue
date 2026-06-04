@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useEditorStore } from '@/stores/editor'
-import type { EditorExportFormat, EditorSource } from '@/types/editor'
 import { useTaskStore } from '@/stores/task'
 import { useSettingsStore } from '@/stores/settings'
 import EditorAssetPanel from '@/components/editor/EditorAssetPanel.vue'
+import EditorExportDialog from '@/components/editor/EditorExportDialog.vue'
 import EditorInspectorPanel from '@/components/editor/EditorInspectorPanel.vue'
 import EditorMixer from '@/components/editor/EditorMixer.vue'
 import EditorTransportBar from '@/components/editor/EditorTransportBar.vue'
+import { useEditorAssetDrag } from '@/composables/useEditorAssetDrag'
+import { useEditorAssets } from '@/composables/useEditorAssets'
+import { useEditorExport } from '@/composables/useEditorExport'
+import { useEditorLayout } from '@/composables/useEditorLayout'
+import { useEditorMixerView } from '@/composables/useEditorMixerView'
 import { useEditorPlayback } from '@/composables/useEditorPlayback'
+import { useEditorProjectBridge } from '@/composables/useEditorProjectBridge'
 import { useEditorShortcuts } from '@/composables/useEditorShortcuts'
 
 const route = useRoute()
@@ -27,88 +30,89 @@ const settings = useSettingsStore()
 
 const MIXER_HEAD_WIDTH = 184
 const ASSET_RAIL_WIDTH = 34
-const RESIZER_WIDTH = 10
-const MIN_ASSET_WIDTH = 180
-const MAX_ASSET_WIDTH = 320
-const MIN_CENTER_WIDTH = 520
-const MIN_INSPECTOR_WIDTH = 240
-const MAX_INSPECTOR_WIDTH = 420
-const ASSET_COLLAPSED_STORAGE_KEY = 'pymss:editor:asset-collapsed'
-const ASSET_PANEL_WIDTH_STORAGE_KEY = 'pymss:editor:asset-width'
-const INSPECTOR_WIDTH_STORAGE_KEY = 'pymss:editor:inspector-width'
 const ASSET_PANEL_WIDTH = 218
 const hasTauriApis = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 const shellEl = ref<HTMLElement | null>(null)
 const mixerScrollEl = ref<HTMLElement | null>(null)
 const assetPanelEl = ref<HTMLElement | null>(null)
 const mixerRef = ref<InstanceType<typeof EditorMixer> | null>(null)
-const isDraggingExternal = ref(false)
-const draggingSourceId = ref<string | null>(null)
-const draggingSourceName = ref<string | null>(null)
-const draggingGhost = ref<{ x: number; y: number } | null>(null)
-const inspectorPanelWidth = ref(288)
-const assetPanelWidth = ref(ASSET_PANEL_WIDTH)
-const isAssetCollapsed = ref(false)
-const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440)
-const showExportDialog = ref(false)
-const exportFormatDraft = ref<EditorExportFormat>('wav')
-const exportWavBitDepthDraft = ref('PCM_24')
-const exportFlacBitDepthDraft = ref('PCM_24')
-
-type ResizeSide = 'assets' | 'inspector'
-
-type ResizeState = {
-  side: ResizeSide
-  startX: number
-  startAssetWidth: number
-  startInspectorWidth: number
-}
-
-const activeResize = ref<ResizeState | null>(null)
-
-let unlistenDrop: UnlistenFn | null = null
-let unlistenOpenProject: UnlistenFn | null = null
-let assetDragMoveHandler: ((event: MouseEvent) => void) | null = null
-let assetDragUpHandler: ((event: MouseEvent) => void) | null = null
 
 const session = computed(() => editor.session)
 const sessionName = computed(() => session.value?.name || t('editor.fallbackTitle'))
 const sessionHint = computed(() => session.value?.sourceResultDir || t('editor.brandHint'))
-const librarySources = computed(() => session.value?.sources || [])
-const inspectorVisible = computed(() => isInspectorVisible())
-const assetPanelVisible = computed(() => !isAssetCollapsed.value && isAssetVisible())
-const assetResizerVisible = computed(() => assetPanelVisible.value)
-const exportFormatOptions = computed(() => [
-  { label: 'WAV', value: 'wav' as EditorExportFormat },
-  { label: 'FLAC', value: 'flac' as EditorExportFormat },
-])
-const wavBitDepthOptions = computed(() => [
-  { label: 'PCM_16', value: 'PCM_16' },
-  { label: 'PCM_24', value: 'PCM_24' },
-  { label: 'FLOAT', value: 'FLOAT' },
-])
-const flacBitDepthOptions = computed(() => [
-  { label: 'PCM_16', value: 'PCM_16' },
-  { label: 'PCM_24', value: 'PCM_24' },
-])
-const exportSummaryRows = computed(() => [
-  { label: t('editor.totalDuration'), value: editor.duration ? `${Math.round(editor.duration * 10) / 10}s` : '0s' },
-  { label: t('editor.tracks'), value: String(session.value?.tracks.length || 0) },
-  { label: t('editor.exportSampleRateStrategy'), value: t('editor.exportSampleRateStrategyValue') },
-])
-const shellStyle = computed(() => ({
-  '--asset-rail-width': `${ASSET_RAIL_WIDTH}px`,
-  '--asset-panel-width': assetPanelVisible.value ? `${assetPanelWidth.value}px` : '0px',
-  '--asset-resizer-width': assetResizerVisible.value ? `${RESIZER_WIDTH}px` : '0px',
-  '--inspector-resizer-width': inspectorVisible.value ? `${RESIZER_WIDTH}px` : '0px',
-  '--inspector-width': inspectorVisible.value ? `${inspectorPanelWidth.value}px` : '0px',
-}))
+const {
+  activeResize,
+  assetPanelVisible,
+  assetResizerVisible,
+  shellStyle,
+  startResize,
+  toggleAssetPanel,
+} = useEditorLayout({
+  shellEl,
+  assetRailWidth: ASSET_RAIL_WIDTH,
+  resizerWidth: 10,
+  minAssetWidth: 180,
+  maxAssetWidth: 320,
+  minCenterWidth: 520,
+  minInspectorWidth: 240,
+  maxInspectorWidth: 420,
+  initialAssetWidth: ASSET_PANEL_WIDTH,
+})
+const {
+  draggingSourceName,
+  draggingGhost,
+  clearAssetPointerDrag,
+  handleAssetPointerGrab,
+} = useEditorAssetDrag({
+  mixerRef,
+})
+const {
+  librarySources,
+  addSourceAsReference,
+  addTrackFromAsset,
+  revealSource,
+  revealTrackSource,
+  openExportDir,
+  removeSource,
+} = useEditorAssets({
+  editor,
+  task,
+  message,
+  dialog,
+  t,
+  session,
+  clearAssetPointerDrag,
+})
+const { isDraggingExternal } = useEditorProjectBridge({
+  routeProjectId: String(route.query.projectId || ''),
+  hasTauriApis,
+  editor,
+  assetPanelEl,
+  message,
+  t,
+})
+const {
+  showExportDialog,
+  exportFormatDraft,
+  exportWavBitDepthDraft,
+  exportFlacBitDepthDraft,
+  openExportDialog,
+  setExportDialogVisible,
+  setExportFormat,
+  setExportWavBitDepth,
+  setExportFlacBitDepth,
+  exportMix,
+} = useEditorExport({
+  editor,
+  settings,
+  message,
+  t,
+})
 const playback = useEditorPlayback({ editor, scrollEl: mixerScrollEl, trackHeaderWidth: MIXER_HEAD_WIDTH })
 const {
   transportVisualState,
   transportPendingAction,
   transportCanToggle,
-  isBusy: playbackIsBusy,
   shouldFollowPlayhead,
   currentTime: playbackCurrentTime,
   loop: playbackLoop,
@@ -117,142 +121,51 @@ const {
   toggleTransport,
   seek: playbackSeek,
 } = playback
-
-async function loadProject(projectId: string) {
-  if (!projectId) return
-  await editor.loadProject(projectId)
-}
+const {
+  zoomFit,
+  zoomAt,
+  updatePlaybackLoop,
+  handleMixerScrollReady,
+} = useEditorMixerView({
+  editor,
+  trackHeaderWidth: MIXER_HEAD_WIDTH,
+  scrollEl: mixerScrollEl,
+  playbackLoop,
+})
 
 async function togglePlayback() {
   const ok = await toggleTransport()
   if (!ok && playbackError.value) message.error(playbackError.value)
 }
 
+function handleTrackMuteRequest(trackId: string) {
+  editor.toggleTrackFlag(trackId, 'muted')
+}
+
+function handleTrackSoloRequest(trackId: string) {
+  editor.toggleTrackFlag(trackId, 'solo')
+}
+
+function toggleSelectedTrackFlag(flag: 'muted' | 'solo') {
+  if (!editor.selectedTrackId) return
+  editor.toggleTrackFlag(editor.selectedTrackId, flag)
+}
+
+function removeSelectedTrack() {
+  if (!editor.selectedTrackId) return
+  editor.removeTrack(editor.selectedTrackId)
+}
+
 function handleTransportToggleRequest() {
   void togglePlayback()
 }
 
-function isInspectorVisible() {
-  return viewportWidth.value > 1320
+function stopPlayback() {
+  playbackStop(false)
 }
 
-function isAssetVisible() {
-  return viewportWidth.value > 920
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
-}
-
-function getShellWidth() {
-  return shellEl.value?.clientWidth || window.innerWidth || 0
-}
-
-function getVisibleHandleWidth() {
-  return inspectorVisible.value ? RESIZER_WIDTH : 0
-}
-
-function getVisibleAssetHandleWidth() {
-  return assetResizerVisible.value ? RESIZER_WIDTH : 0
-}
-
-function getAvailableSidebarWidth() {
-  const shellWidth = getShellWidth()
-  const otherWidth = 0
-  return Math.max(0, shellWidth - MIN_CENTER_WIDTH - otherWidth - getVisibleHandleWidth())
-}
-
-function getAvailableAssetWidth() {
-  const shellWidth = getShellWidth()
-  const inspectorWidth = inspectorVisible.value ? inspectorPanelWidth.value : 0
-  return Math.max(
-    0,
-    shellWidth
-      - ASSET_RAIL_WIDTH
-      - MIN_CENTER_WIDTH
-      - inspectorWidth
-      - getVisibleHandleWidth()
-      - getVisibleAssetHandleWidth(),
-  )
-}
-
-function clampInspectorWidth(width: number) {
-  const responsiveMax = getAvailableSidebarWidth()
-  return clamp(width, MIN_INSPECTOR_WIDTH, Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, responsiveMax)))
-}
-
-function clampAssetWidth(width: number) {
-  const responsiveMax = getAvailableAssetWidth()
-  return clamp(width, MIN_ASSET_WIDTH, Math.max(MIN_ASSET_WIDTH, Math.min(MAX_ASSET_WIDTH, responsiveMax)))
-}
-
-function savePanelWidths() {
-  try {
-    localStorage.setItem(ASSET_COLLAPSED_STORAGE_KEY, isAssetCollapsed.value ? '1' : '0')
-    localStorage.setItem(ASSET_PANEL_WIDTH_STORAGE_KEY, String(assetPanelWidth.value))
-    localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(inspectorPanelWidth.value))
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function stopResize() {
-  if (!activeResize.value) return
-  activeResize.value = null
-  window.removeEventListener('mousemove', handleResizeMove)
-  window.removeEventListener('mouseup', stopResize)
-  savePanelWidths()
-}
-
-function handleResizeMove(event: MouseEvent) {
-  const state = activeResize.value
-  if (!state) return
-  if (state.side === 'assets') {
-    assetPanelWidth.value = clampAssetWidth(state.startAssetWidth + (event.clientX - state.startX))
-    return
-  }
-  inspectorPanelWidth.value = clampInspectorWidth(state.startInspectorWidth - (event.clientX - state.startX))
-}
-
-function startResize(side: ResizeSide, event: MouseEvent) {
-  if (event.button !== 0) return
-  if (side === 'assets' && !assetResizerVisible.value) return
-  if (side === 'inspector' && !inspectorVisible.value) return
-  event.preventDefault()
-  activeResize.value = {
-    side,
-    startX: event.clientX,
-    startAssetWidth: assetPanelWidth.value,
-    startInspectorWidth: inspectorPanelWidth.value,
-  }
-  window.addEventListener('mousemove', handleResizeMove)
-  window.addEventListener('mouseup', stopResize)
-}
-
-function restorePanelWidths() {
-  try {
-    isAssetCollapsed.value = localStorage.getItem(ASSET_COLLAPSED_STORAGE_KEY) === '1'
-    const storedAssetWidth = Number(localStorage.getItem(ASSET_PANEL_WIDTH_STORAGE_KEY) || assetPanelWidth.value)
-    const storedInspectorWidth = Number(localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY) || inspectorPanelWidth.value)
-    assetPanelWidth.value = clampAssetWidth(storedAssetWidth)
-    inspectorPanelWidth.value = clampInspectorWidth(storedInspectorWidth)
-  } catch {
-    assetPanelWidth.value = clampAssetWidth(assetPanelWidth.value)
-    inspectorPanelWidth.value = clampInspectorWidth(inspectorPanelWidth.value)
-  }
-}
-
-function syncPanelWidthsToViewport() {
-  viewportWidth.value = window.innerWidth
-  assetPanelWidth.value = clampAssetWidth(assetPanelWidth.value)
-  inspectorPanelWidth.value = clampInspectorWidth(inspectorPanelWidth.value)
-}
-
-function toggleAssetPanel(force?: boolean) {
-  const next = typeof force === 'boolean' ? force : !isAssetCollapsed.value
-  if (isAssetCollapsed.value === next) return
-  isAssetCollapsed.value = next
-  savePanelWidths()
+function stopPlaybackAndReset() {
+  playbackStop(true)
 }
 
 function resetPlayhead() {
@@ -267,126 +180,8 @@ function setTrackVolume(trackId: string, value: number) {
   editor.setTrackVolume(trackId, value)
 }
 
-function toggleTrackFlag(trackId: string, flag: 'muted' | 'solo') {
-  editor.toggleTrackFlag(trackId, flag)
-}
-
 function setTrackFades(trackId: string, patch: { fadeIn?: number; fadeOut?: number }) {
   editor.setTrackFades(trackId, patch)
-}
-
-async function addSourceAsReference(source: EditorSource) {
-  try {
-    editor.addTrackFromSourceId(source.id)
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : String(error))
-  }
-}
-
-function addTrackFromAsset(sourceId: string) {
-  try {
-    editor.addTrackFromSourceId(sourceId)
-    clearAssetPointerDrag()
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : String(error))
-  }
-}
-
-function revealSource(source: EditorSource) {
-  void task.revealPath(source.path)
-}
-
-function removeSource(source: EditorSource) {
-  if (source.role === 'stem') {
-    message.warning(t('editor.assetLocalProtected'))
-    return
-  }
-  const linkedTrackCount = editor.session?.tracks.filter((track) => track.sourceId === source.id).length || 0
-  const commitRemoval = () => {
-    const result = editor.removeSource(source.id)
-    if (!result.removedSource) return
-
-    if (result.removedTracks > 0) {
-      message.success(t('editor.assetRemovedWithTracks', { count: result.removedTracks }))
-      return
-    }
-
-    message.success(t('editor.assetRemoved'))
-  }
-
-  if (linkedTrackCount > 0) {
-    dialog.warning({
-      title: t('editor.removeAssetConfirmTitle'),
-      content: t('editor.removeAssetConfirmContent', { count: linkedTrackCount }),
-      positiveText: t('common.confirm'),
-      negativeText: t('common.cancel'),
-      onPositiveClick: commitRemoval,
-    })
-    return
-  }
-
-  commitRemoval()
-}
-
-function setMixerDropTarget(trackId: string | null) {
-  mixerRef.value?.setDropTargetTrackId(trackId)
-}
-
-function clearAssetPointerDrag() {
-  draggingSourceId.value = null
-  draggingSourceName.value = null
-  draggingGhost.value = null
-  mixerRef.value?.setDraggingAssetSourceId(null)
-  setMixerDropTarget(null)
-  if (assetDragMoveHandler) {
-    window.removeEventListener('mousemove', assetDragMoveHandler)
-    assetDragMoveHandler = null
-  }
-  if (assetDragUpHandler) {
-    window.removeEventListener('mouseup', assetDragUpHandler)
-    assetDragUpHandler = null
-  }
-}
-
-function handleAssetPointerGrab(payload: { source: EditorSource; x: number; y: number }) {
-  clearAssetPointerDrag()
-  draggingSourceId.value = payload.source.id
-  draggingSourceName.value = payload.source.name
-  draggingGhost.value = { x: payload.x, y: payload.y }
-  mixerRef.value?.setDraggingAssetSourceId(payload.source.id)
-
-  assetDragMoveHandler = (event: MouseEvent) => {
-    draggingGhost.value = { x: event.clientX, y: event.clientY }
-    const mixer = mixerRef.value
-    if (!mixer || !draggingSourceId.value) return
-
-    if (!mixer.containsPoint(event.clientX, event.clientY)) {
-      setMixerDropTarget(null)
-      return
-    }
-
-    const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
-    const trackRow = target?.closest('.track-row') as HTMLElement | null
-    const emptyState = target?.closest('.empty-state') as HTMLElement | null
-
-    if (trackRow?.dataset.trackId) {
-      setMixerDropTarget(trackRow.dataset.trackId)
-    } else if (emptyState) {
-      setMixerDropTarget('__empty__')
-    } else {
-      setMixerDropTarget('__mixer__')
-    }
-  }
-
-  assetDragUpHandler = (event: MouseEvent) => {
-    const mixer = mixerRef.value
-    const canDrop = Boolean(draggingSourceId.value && mixer?.containsPoint(event.clientX, event.clientY))
-    if (canDrop) mixer?.commitAssetDrop()
-    clearAssetPointerDrag()
-  }
-
-  window.addEventListener('mousemove', assetDragMoveHandler)
-  window.addEventListener('mouseup', assetDragUpHandler)
 }
 
 async function save() {
@@ -394,86 +189,9 @@ async function save() {
   message.success(t('editor.saved'))
 }
 
-function openExportDialog() {
-  exportFormatDraft.value = editor.exportFormat
-  exportWavBitDepthDraft.value = settings.wavBitDepth
-  exportFlacBitDepthDraft.value = settings.flacBitDepth
-  showExportDialog.value = true
-}
-
-function closeExportDialog() {
-  showExportDialog.value = false
-}
-
-async function exportMix() {
-  try {
-    editor.exportFormat = exportFormatDraft.value
-    settings.wavBitDepth = exportWavBitDepthDraft.value
-    settings.flacBitDepth = exportFlacBitDepthDraft.value
-    const result = await editor.exportMix({
-      format: exportFormatDraft.value,
-      audioParams: {
-        wavBitDepth: exportWavBitDepthDraft.value,
-        flacBitDepth: exportFlacBitDepthDraft.value,
-      },
-    })
-    message.success(t('editor.exported', { path: result.path }))
-    closeExportDialog()
-  } catch {
-    message.error(editor.lastError || t('editor.exportFailed'))
-  }
-}
-
-function openExportDir() {
-  const path = editor.lastExport?.path || session.value?.sourceResultDir
-  if (path) void task.revealPath(path)
-}
-
-function zoomFit() {
-  const viewportWidth = mixerScrollEl.value?.clientWidth || 0
-  if (!viewportWidth || editor.duration <= 0) return
-  editor.setZoom((viewportWidth - MIXER_HEAD_WIDTH - 24) / Math.max(editor.duration, 0.01))
-}
-
-function zoomAt(payload: { direction: 'in' | 'out'; anchorRatio: number }) {
-  const element = mixerScrollEl.value
-  if (!element) {
-    if (payload.direction === 'in') editor.zoomIn()
-    else editor.zoomOut()
-    return
-  }
-  const anchorX = element.scrollLeft + element.clientWidth * payload.anchorRatio - MIXER_HEAD_WIDTH
-  const anchorTime = Math.max(0, anchorX / Math.max(1, editor.pixelsPerSecond))
-  const nextZoom = editor.pixelsPerSecond + (payload.direction === 'in' ? 18 : -18)
-  editor.setZoom(nextZoom)
-  requestAnimationFrame(() => {
-    element.scrollLeft = Math.max(0, MIXER_HEAD_WIDTH + anchorTime * editor.pixelsPerSecond - element.clientWidth * payload.anchorRatio)
-  })
-}
-
-function updatePlaybackLoop(value: boolean) {
-  playbackLoop.value = value
-}
-
-function handleMixerScrollReady(element: HTMLElement) {
-  mixerScrollEl.value = element
-}
-
-function isPointInAssetPanel(position: { x: number; y: number } | null | undefined) {
-  const element = assetPanelEl.value
-  if (!element || !position) return false
-
-  const rect = element.getBoundingClientRect()
-  const scale = window.devicePixelRatio || 1
-  const x = position.x / scale
-  const y = position.y / scale
-
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
-}
-
 useEditorShortcuts({
   togglePlay: togglePlayback,
-  stop: () => playbackStop(false),
+  stop: stopPlayback,
   undo: editor.undo,
   redo: editor.redo,
   zoomIn: editor.zoomIn,
@@ -481,76 +199,12 @@ useEditorShortcuts({
   save,
   toHome: resetPlayhead,
   seek: seekBy,
-  toggleMute: () => { if (editor.selectedTrackId) editor.toggleTrackFlag(editor.selectedTrackId, 'muted') },
-  toggleSolo: () => { if (editor.selectedTrackId) editor.toggleTrackFlag(editor.selectedTrackId, 'solo') },
-  removeTrack: () => { if (editor.selectedTrackId) editor.removeTrack(editor.selectedTrackId) },
+  toggleMute: () => toggleSelectedTrackFlag('muted'),
+  toggleSolo: () => toggleSelectedTrackFlag('solo'),
+  removeTrack: removeSelectedTrack,
 })
 
-onMounted(async () => {
-  restorePanelWidths()
-  window.addEventListener('resize', syncPanelWidthsToViewport)
-
-  const projectId = String(route.query.projectId || '')
-  if (projectId && hasTauriApis) {
-    try {
-      await loadProject(projectId)
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      message.error(t('editor.loadFailed', { detail }))
-    }
-  }
-
-  if (hasTauriApis) {
-    try {
-      unlistenDrop = await getCurrentWebview().onDragDropEvent(async (event) => {
-        const type = event.payload.type
-        if (type === 'over' || type === 'enter') {
-          isDraggingExternal.value = isPointInAssetPanel(event.payload.position)
-        } else if (type === 'drop') {
-          const isDropInAssetPanel = isPointInAssetPanel(event.payload.position)
-          isDraggingExternal.value = false
-          if (!isDropInAssetPanel) return
-          try {
-            const paths = (event.payload as { paths?: string[] }).paths || []
-            const result = await editor.scanAssets(paths)
-            if (result.files.length) message.success(t('editor.importSuccess', { count: result.files.length }))
-            else message.warning(t('editor.importEmpty'))
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error)
-            message.error(detail || t('editor.importEmpty'))
-          }
-        } else {
-          isDraggingExternal.value = false
-        }
-      })
-    } catch {
-      // browser preview fallback
-    }
-
-    unlistenOpenProject = await listen<{ projectId: string }>('pymss://editor-open-project', (event) => {
-      void (async () => {
-        try {
-          await loadProject(event.payload.projectId)
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error)
-          message.error(t('editor.loadFailed', { detail }))
-        }
-      })()
-    })
-  }
-})
-
-onBeforeUnmount(() => {
-  stopResize()
-  window.removeEventListener('resize', syncPanelWidthsToViewport)
-  clearAssetPointerDrag()
-  unlistenDrop?.()
-  unlistenOpenProject?.()
-})
-
-watch(() => editor.session?.id, () => {
-  playbackStop(true)
-})
+watch(() => editor.session?.id, stopPlaybackAndReset)
 </script>
 
 <template>
@@ -647,13 +301,13 @@ watch(() => editor.session?.id, () => {
             :pixels-per-second="editor.pixelsPerSecond"
             @scroll-ready="handleMixerScrollReady"
             @select-track="editor.selectTrack"
-            @toggle-mute="(id) => editor.toggleTrackFlag(id, 'muted')"
-            @toggle-solo="(id) => editor.toggleTrackFlag(id, 'solo')"
-            @context-mute="(id) => editor.toggleTrackFlag(id, 'muted')"
-            @context-solo="(id) => editor.toggleTrackFlag(id, 'solo')"
+            @toggle-mute="handleTrackMuteRequest"
+            @toggle-solo="handleTrackSoloRequest"
+            @context-mute="handleTrackMuteRequest"
+            @context-solo="handleTrackSoloRequest"
             @seek="playbackSeek"
             @remove-track="editor.removeTrack"
-            @reveal-track="(id) => { const currentSession = session; const track = currentSession?.tracks.find((item) => item.id === id); const source = track ? editor.sourceMap.get(track.sourceId) : null; if (source) revealSource(source) }"
+            @reveal-track="revealTrackSource"
             @zoom-in="editor.zoomIn"
             @zoom-out="editor.zoomOut"
             @zoom-fit="zoomFit"
@@ -674,7 +328,7 @@ watch(() => editor.session?.id, () => {
           :duration="editor.duration"
           :last-export-path="editor.lastExport?.path || null"
           @rename-track="editor.renameTrack"
-          @toggle-track-flag="toggleTrackFlag"
+          @toggle-track-flag="editor.toggleTrackFlag"
           @set-track-volume="setTrackVolume"
           @begin-track-volume="editor.beginInteraction"
           @commit-track-volume="editor.commitInteraction"
@@ -691,73 +345,21 @@ watch(() => editor.session?.id, () => {
       {{ draggingSourceName }}
     </div>
 
-    <n-modal
+    <EditorExportDialog
       :show="showExportDialog"
-      preset="card"
-      class="editor-export-modal"
-      :title="t('editor.exportDialogTitle')"
-      :bordered="false"
-      size="small"
-      style="width: min(560px, calc(100vw - 32px));"
-      @update:show="(value: boolean) => { if (!value) closeExportDialog() }"
-    >
-      <div class="export-dialog">
-        <div class="export-dialog__intro">
-          <strong>{{ sessionName }}</strong>
-          <span>{{ t('editor.exportDialogHint') }}</span>
-        </div>
-
-        <div class="export-dialog__form">
-          <label class="export-dialog__field">
-            <span>{{ t('editor.exportFormat') }}</span>
-            <n-select
-              v-model:value="exportFormatDraft"
-              :options="exportFormatOptions"
-              size="small"
-            />
-          </label>
-
-          <label class="export-dialog__field" v-if="exportFormatDraft === 'wav'">
-            <span>{{ t('audio.wavBitDepth') }}</span>
-            <n-select
-              v-model:value="exportWavBitDepthDraft"
-              :options="wavBitDepthOptions"
-              size="small"
-            />
-          </label>
-
-          <label class="export-dialog__field" v-if="exportFormatDraft === 'flac'">
-            <span>{{ t('audio.flacBitDepth') }}</span>
-            <n-select
-              v-model:value="exportFlacBitDepthDraft"
-              :options="flacBitDepthOptions"
-              size="small"
-            />
-          </label>
-        </div>
-
-        <div class="export-dialog__section export-dialog__section--compact">
-          <div class="export-dialog__section-title">{{ t('editor.exportRenderSummary') }}</div>
-          <div class="export-summary">
-            <div v-for="row in exportSummaryRows" :key="row.label" class="export-summary__item">
-              <span>{{ row.label }}</span>
-              <strong>{{ row.value }}</strong>
-            </div>
-            <div class="export-summary__item export-summary__item--wide">
-              <span>{{ t('editor.exportProcessing') }}</span>
-              <strong>{{ t('editor.exportProcessingValue') }}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="export-dialog__footer">
-          <n-button secondary @click="closeExportDialog">{{ t('common.cancel') }}</n-button>
-          <n-button type="primary" :loading="editor.exporting" @click="exportMix">{{ t('editor.export') }}</n-button>
-        </div>
-      </template>
-    </n-modal>
+      :session-name="sessionName"
+      :duration="editor.duration"
+      :track-count="session?.tracks.length || 0"
+      :exporting="editor.exporting"
+      :format="exportFormatDraft"
+      :wav-bit-depth="exportWavBitDepthDraft"
+      :flac-bit-depth="exportFlacBitDepthDraft"
+      @update:show="setExportDialogVisible"
+      @update:format="setExportFormat"
+      @update:wav-bit-depth="setExportWavBitDepth"
+      @update:flac-bit-depth="setExportFlacBitDepth"
+      @confirm="exportMix"
+    />
   </div>
 </template>
 
@@ -1088,130 +690,6 @@ watch(() => editor.session?.id, () => {
   text-overflow: ellipsis;
 }
 
-.editor-export-modal :deep(.n-card) {
-  width: min(560px, calc(100vw - 32px)) !important;
-  max-width: min(560px, calc(100vw - 32px)) !important;
-  background:
-    radial-gradient(circle at top right, rgba(255, 123, 84, 0.12), transparent 34%),
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 96%, transparent), var(--surface));
-}
-
-.export-dialog {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-}
-
-.export-dialog__intro {
-  display: grid;
-  gap: 4px;
-  padding: 2px 2px 0;
-}
-
-.export-dialog__intro strong {
-  font-size: 13px;
-  line-height: 1.1;
-}
-
-.export-dialog__intro span {
-  color: var(--on-surface-muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.export-dialog__form {
-  display: grid;
-  gap: 10px;
-}
-
-.export-dialog__field {
-  display: grid;
-  gap: 6px;
-}
-
-.export-dialog__field span {
-  color: var(--on-surface-muted);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.export-dialog__section {
-  display: grid;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline) 74%, transparent);
-}
-
-.export-dialog__section--compact {
-  padding: 10px;
-}
-
-.export-dialog__notice {
-  display: grid;
-  gap: 6px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-2) 68%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline) 54%, transparent);
-}
-
-.export-dialog__notice span {
-  color: var(--on-surface-muted);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.export-dialog__section-title {
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.export-summary {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
-}
-
-.export-summary__item {
-  display: grid;
-  gap: 3px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-1) 80%, transparent);
-}
-
-.export-summary__item--wide {
-  grid-column: auto;
-}
-
-.export-summary__item span {
-  color: var(--on-surface-muted);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.export-summary__item strong {
-  font-size: 12px;
-  line-height: 1.3;
-}
-
-.export-dialog__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.editor-export-modal :deep(.n-base-selection) {
-  --n-color: color-mix(in srgb, var(--surface-1) 92%, transparent) !important;
-  --n-border: 1px solid color-mix(in srgb, var(--outline) 60%, transparent) !important;
-  --n-border-hover: 1px solid color-mix(in srgb, var(--outline) 78%, transparent) !important;
-  --n-border-focus: 1px solid color-mix(in srgb, var(--primary) 50%, transparent) !important;
-  --n-box-shadow-focus: 0 0 0 2px color-mix(in srgb, var(--primary-soft) 30%, transparent) !important;
-}
-
 @media (max-width: 920px) {
   .editor-shell__assets {
     grid-template-columns: var(--asset-rail-width);
@@ -1219,10 +697,6 @@ watch(() => editor.session?.id, () => {
 
   .editor-shell__asset-panel {
     display: none;
-  }
-
-  .export-summary {
-    grid-template-columns: 1fr;
   }
 }
 </style>

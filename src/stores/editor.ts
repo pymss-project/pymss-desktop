@@ -454,8 +454,8 @@ export const useEditorStore = defineStore('editor', () => {
       session.value = normalizeSession(result)
       selectedTrackId.value = session.value.tracks[0]?.id || null
       clearHistory()
-      const changed = await hydrateSessionSources()
-      if (changed) await saveProject()
+      const currentProjectId = session.value.id
+      hydrateSessionSourcesInBackground(currentProjectId)
       return session.value
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -490,8 +490,8 @@ export const useEditorStore = defineStore('editor', () => {
       session.value = normalizeSession(result)
       selectedTrackId.value = session.value.tracks[0]?.id || null
       clearHistory()
-      const changed = await hydrateSessionSources()
-      if (changed) await saveProject()
+      const currentProjectId = session.value.id
+      hydrateSessionSourcesInBackground(currentProjectId)
       return session.value
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -542,10 +542,25 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
-  async function hydrateSessionSources() {
-    if (!session.value) return
+  function hydrateSessionSourcesInBackground(projectId: string) {
+    void hydrateSessionSources(projectId)
+      .then((changed) => {
+        if (!changed) return
+        if (session.value?.id !== projectId) return
+        void saveProject()
+      })
+      .catch(() => {})
+  }
+
+  async function hydrateSessionSources(projectId = session.value?.id || '') {
+    if (!session.value || !projectId || session.value.id !== projectId) return false
+
     let changed = false
-    for (const source of session.value.sources) {
+    const sources = [...session.value.sources]
+
+    for (const source of sources) {
+      if (!session.value || session.value.id !== projectId) break
+
       const beforeMetadata = {
         name: source.name,
         duration: source.duration,
@@ -553,8 +568,10 @@ export const useEditorStore = defineStore('editor', () => {
         channels: source.channels,
         peaksPath: source.peaksPath || null,
       }
+
       if (!source.duration || !source.sampleRate) {
         const metadata = await getMetadata(source.path).catch(() => null)
+        if (!session.value || session.value.id !== projectId) break
         if (metadata) {
           source.name = metadata.name || source.name
           source.duration = Number(metadata.duration || source.duration)
@@ -562,9 +579,12 @@ export const useEditorStore = defineStore('editor', () => {
           source.channels = Number(metadata.channels || source.channels)
         }
       }
+
       if (!source.peaks?.length) {
         await ensurePeaks(source.id)
+        if (!session.value || session.value.id !== projectId) break
       }
+
       if (
         source.name !== beforeMetadata.name
         || source.duration !== beforeMetadata.duration
@@ -575,6 +595,7 @@ export const useEditorStore = defineStore('editor', () => {
         changed = true
       }
     }
+
     return changed
   }
 
@@ -652,11 +673,26 @@ export const useEditorStore = defineStore('editor', () => {
     return { files: imported || [], warnings: [] } satisfies ScanAudioPathsResult
   }
 
-  function renameTrack(trackId: string, name: string) {
+  function renameTrack(trackId: string, name: string, commit = true) {
     const track = session.value?.tracks.find((item) => item.id === trackId)
     if (!track) return
+    const currentName = track.name
+    const trimmedName = name.trim()
+    const resolvedName = trimmedName || currentName
+
+    if (!commit) {
+      if (resolvedName === currentName) return
+      track.name = resolvedName
+      return
+    }
+
+    if (resolvedName === currentName) {
+      scheduleSave()
+      return
+    }
+
     pushHistory()
-    track.name = name.trim() || track.name
+    track.name = resolvedName
     scheduleSave()
   }
 
@@ -807,6 +843,7 @@ export const useEditorStore = defineStore('editor', () => {
     getMetadata,
     ensurePeaks,
     hydrateSessionSources,
+    hydrateSessionSourcesInBackground,
     ensureSourceByPath,
     addReferenceSourceByPath,
     addTrackFromSourceId,

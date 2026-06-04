@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::PageLoadEvent;
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
@@ -154,6 +155,26 @@ fn safe_file_name(value: &str) -> String {
     }
 }
 
+fn safe_asset_file_name(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let trimmed = sanitized
+        .trim()
+        .trim_matches('.')
+        .trim_matches('_');
+    if trimmed.is_empty() {
+        "audio".to_string()
+    } else {
+        trimmed.chars().take(180).collect()
+    }
+}
+
 fn editor_project_dir(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
     Ok(editor_projects_root(app)?.join(safe_file_name(project_id)))
 }
@@ -238,7 +259,7 @@ fn import_audio_file_to_project(app: &AppHandle, project_id: &str, source_path: 
         let safe_parts: Vec<String> = relative
             .components()
             .filter_map(|component| match component {
-                std::path::Component::Normal(value) => value.to_str().map(safe_file_name),
+                std::path::Component::Normal(value) => value.to_str().map(safe_asset_file_name),
                 _ => None,
             })
             .filter(|part| !part.is_empty())
@@ -372,8 +393,14 @@ pub async fn open_editor_window(app: AppHandle, payload: Value) -> AppResult<Val
         .inner_size(1440.0, 900.0)
         .min_inner_size(1180.0, 720.0)
         .decorations(false)
-        .visible(true)
+        .visible(false)
         .focused(true)
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
         .build()
         .map_err(|error| AppError::Worker(error.to_string()))?;
     Ok(serde_json::json!({ "projectId": project_id, "label": label, "opened": true, "reused": false }))

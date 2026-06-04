@@ -9,6 +9,11 @@ use state::AppState;
 
 fn main() {
     tauri::Builder::default()
+        .on_page_load(|webview, _payload| {
+            let window = webview.window();
+            let _ = window.show();
+            let _ = window.set_focus();
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())

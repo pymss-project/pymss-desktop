@@ -30,6 +30,10 @@ const emit = defineEmits<{
 
 const expandedSet = computed(() => new Set(props.expandedKeys))
 
+function countNodeAssets(node: EditorAssetTreeNode): number {
+  return node.assets.length + node.children.reduce((total, child) => total + countNodeAssets(child), 0)
+}
+
 function handleAssetPointerDown(event: MouseEvent, source: EditorSource) {
   if (event.button !== 0) return
   emit('sourcePointerGrab', {
@@ -55,7 +59,7 @@ function formatAssetMeta(source: EditorSource) {
           <n-icon :component="expandedSet.has(node.key) ? ChevronDownOutline : ChevronForwardOutline" />
           <n-icon :component="FolderOutline" />
           <strong>{{ node.name }}</strong>
-          <span>{{ node.assets.length + node.children.reduce((total, child) => total + child.assets.length, 0) }}</span>
+          <span>{{ countNodeAssets(node) }}</span>
         </button>
 
         <div v-if="expandedSet.has(node.key)" class="asset-folder__body">
