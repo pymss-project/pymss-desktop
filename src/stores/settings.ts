@@ -23,6 +23,9 @@ import type { EnvInfo } from '@/stores/app'
 
 type AppPathsPayload = {
   dataRoot: string
+  portableDataRoot: string
+  dataRootIsPortable: boolean
+  canMigrateDataRootToPortable: boolean
   settingsDir: string
   modelsDir: string
   outputsDir: string

@@ -27,7 +27,6 @@ const models = useModelStore()
 const settings = useSettingsStore()
 const tasks = useTaskStore()
 const migratingDataRoot = ref(false)
-const isWindows = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform)
 
 type Tone = 'primary' | 'success' | 'muted'
 
@@ -244,7 +243,7 @@ async function migrateDataRootToPortable() {
           </div>
         </div>
         <code class="data-dir-path" :title="settings.dataRoot || t('common.notSet')">{{ dataRootSummary }}</code>
-        <n-button v-if="isWindows" secondary :loading="migratingDataRoot" @click="migrateDataRootToPortable">
+        <n-button v-if="settings.appPaths?.canMigrateDataRootToPortable" secondary :loading="migratingDataRoot" @click="migrateDataRootToPortable">
           {{ t('separate.migrateDataDirToPortable') }}
         </n-button>
       </section>

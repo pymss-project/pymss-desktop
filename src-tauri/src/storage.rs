@@ -11,6 +11,9 @@ const PORTABLE_DATA_ROOT_DIR_NAME: &str = "data";
 #[serde(rename_all = "camelCase")]
 pub struct AppPathsPayload {
     pub data_root: String,
+    pub portable_data_root: String,
+    pub data_root_is_portable: bool,
+    pub can_migrate_data_root_to_portable: bool,
     pub settings_dir: String,
     pub models_dir: String,
     pub outputs_dir: String,
@@ -116,8 +119,19 @@ pub fn app_paths_payload(app: &AppHandle) -> AppResult<AppPathsPayload> {
 }
 
 fn app_paths_payload_for_root(root: &Path) -> AppResult<AppPathsPayload> {
+    let portable_root = portable_data_root_dir().ok();
+    let data_root_is_portable = portable_root
+        .as_ref()
+        .map(|portable| path_eq(root, portable))
+        .unwrap_or(false);
     Ok(AppPathsPayload {
         data_root: root.to_string_lossy().to_string(),
+        portable_data_root: portable_root
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        data_root_is_portable,
+        can_migrate_data_root_to_portable: cfg!(windows) && !data_root_is_portable,
         settings_dir: root.join("settings").to_string_lossy().to_string(),
         models_dir: root.join("models").to_string_lossy().to_string(),
         outputs_dir: root.join("outputs").to_string_lossy().to_string(),
