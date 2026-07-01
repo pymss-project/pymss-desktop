@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 const DATA_ROOT_DIR_NAME: &str = ".pymss-studio";
+const PORTABLE_DATA_ROOT_DIR_NAME: &str = "data";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,14 +19,56 @@ pub struct AppPathsPayload {
     pub temp_dir: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataRootMigrationPayload {
+    pub previous_data_root: String,
+    pub target_data_root: String,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub cleanup_failed_paths: Vec<String>,
+    pub paths: AppPathsPayload,
+}
+
 pub fn home_dir(app: &AppHandle) -> AppResult<PathBuf> {
     app.path()
         .home_dir()
         .map_err(|error| AppError::Worker(error.to_string()))
 }
 
-pub fn data_root_dir(app: &AppHandle) -> AppResult<PathBuf> {
+fn legacy_data_root_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(home_dir(app)?.join(DATA_ROOT_DIR_NAME))
+}
+
+#[cfg(windows)]
+fn portable_data_root_dir() -> AppResult<PathBuf> {
+    let exe = std::env::current_exe()?;
+    let exe_dir = exe
+        .parent()
+        .ok_or_else(|| AppError::Worker("failed to resolve executable directory".into()))?;
+    Ok(exe_dir.join(PORTABLE_DATA_ROOT_DIR_NAME))
+}
+
+#[cfg(not(windows))]
+fn portable_data_root_dir() -> AppResult<PathBuf> {
+    Err(AppError::Worker(
+        "portable data directory is only supported on Windows".into(),
+    ))
+}
+
+pub fn data_root_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let legacy = legacy_data_root_dir(app)?;
+    if legacy.exists() {
+        return Ok(legacy);
+    }
+    #[cfg(windows)]
+    {
+        return portable_data_root_dir();
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(legacy)
+    }
 }
 
 pub fn settings_dir(app: &AppHandle) -> AppResult<PathBuf> {
@@ -69,14 +112,182 @@ pub fn ensure_app_directories(app: &AppHandle) -> AppResult<()> {
 
 pub fn app_paths_payload(app: &AppHandle) -> AppResult<AppPathsPayload> {
     ensure_app_directories(app)?;
+    app_paths_payload_for_root(&data_root_dir(app)?)
+}
+
+fn app_paths_payload_for_root(root: &Path) -> AppResult<AppPathsPayload> {
     Ok(AppPathsPayload {
-        data_root: data_root_dir(app)?.to_string_lossy().to_string(),
-        settings_dir: settings_dir(app)?.to_string_lossy().to_string(),
-        models_dir: models_dir(app)?.to_string_lossy().to_string(),
-        outputs_dir: outputs_dir(app)?.to_string_lossy().to_string(),
-        editor_projects_dir: editor_projects_dir(app)?.to_string_lossy().to_string(),
-        logs_dir: logs_dir(app)?.to_string_lossy().to_string(),
-        temp_dir: temp_dir(app)?.to_string_lossy().to_string(),
+        data_root: root.to_string_lossy().to_string(),
+        settings_dir: root.join("settings").to_string_lossy().to_string(),
+        models_dir: root.join("models").to_string_lossy().to_string(),
+        outputs_dir: root.join("outputs").to_string_lossy().to_string(),
+        editor_projects_dir: root.join("editor-projects").to_string_lossy().to_string(),
+        logs_dir: root.join("logs").to_string_lossy().to_string(),
+        temp_dir: root.join("temp").to_string_lossy().to_string(),
+    })
+}
+
+fn path_eq(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .replace('/', "\\")
+            .eq_ignore_ascii_case(&right.to_string_lossy().replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    let value = path.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = value.strip_prefix("\\\\?\\UNC\\") {
+            return format!("\\\\{}", rest);
+        }
+        if let Some(rest) = value.strip_prefix("\\\\?\\") {
+            return rest.to_string();
+        }
+    }
+    value
+}
+
+fn collect_tree_stats(path: &Path) -> AppResult<(usize, u64)> {
+    if !path.exists() {
+        return Ok((0, 0));
+    }
+    let mut file_count = 0usize;
+    let mut total_bytes = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let child = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let (nested_count, nested_bytes) = collect_tree_stats(&child)?;
+            file_count += nested_count;
+            total_bytes = total_bytes.saturating_add(nested_bytes);
+        } else if file_type.is_file() || file_type.is_symlink() {
+            file_count += 1;
+            total_bytes = total_bytes.saturating_add(std::fs::symlink_metadata(&child)?.len());
+        }
+    }
+    Ok((file_count, total_bytes))
+}
+
+fn copy_tree(source: &Path, target: &Path) -> AppResult<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_tree(&source_path, &target_path)?;
+            continue;
+        }
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if target_path.exists() {
+            let metadata = std::fs::symlink_metadata(&target_path)?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                std::fs::remove_dir_all(&target_path)?;
+            } else {
+                std::fs::remove_file(&target_path)?;
+            }
+        }
+        std::fs::copy(&source_path, &target_path)?;
+    }
+    Ok(())
+}
+
+fn collect_remaining_paths(path: &Path, results: &mut Vec<String>) {
+    if !path.exists() {
+        return;
+    }
+    if path.is_file() {
+        results.push(display_path(path));
+        return;
+    }
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => {
+            results.push(display_path(path));
+            return;
+        }
+    };
+    let start_len = results.len();
+    for entry in entries.flatten() {
+        let child = entry.path();
+        if child.is_dir() {
+            collect_remaining_paths(&child, results);
+        } else {
+            results.push(display_path(&child));
+        }
+    }
+    if results.len() == start_len {
+        results.push(display_path(path));
+    }
+}
+
+fn cleanup_source_tree(source_root: &Path) -> Vec<String> {
+    if !source_root.exists() {
+        return Vec::new();
+    }
+    if std::fs::remove_dir_all(source_root).is_ok() {
+        return Vec::new();
+    }
+    let mut remaining = Vec::new();
+    collect_remaining_paths(source_root, &mut remaining);
+    remaining.sort();
+    remaining.dedup();
+    remaining
+}
+
+pub fn migrate_data_root_to_portable(app: &AppHandle) -> AppResult<DataRootMigrationPayload> {
+    let previous_root = data_root_dir(app)?;
+    let target_root = portable_data_root_dir()?;
+    if path_eq(&previous_root, &target_root) {
+        ensure_app_directories(app)?;
+        return Ok(DataRootMigrationPayload {
+            previous_data_root: display_path(&previous_root),
+            target_data_root: display_path(&target_root),
+            file_count: 0,
+            total_bytes: 0,
+            cleanup_failed_paths: Vec::new(),
+            paths: app_paths_payload_for_root(&target_root)?,
+        });
+    }
+    if !previous_root.exists() {
+        std::fs::create_dir_all(&target_root)?;
+        return Ok(DataRootMigrationPayload {
+            previous_data_root: display_path(&previous_root),
+            target_data_root: display_path(&target_root),
+            file_count: 0,
+            total_bytes: 0,
+            cleanup_failed_paths: Vec::new(),
+            paths: app_paths_payload_for_root(&target_root)?,
+        });
+    }
+    if !previous_root.is_dir() {
+        return Err(AppError::Worker(format!(
+            "data root is not a directory: {}",
+            previous_root.display()
+        )));
+    }
+
+    let (file_count, total_bytes) = collect_tree_stats(&previous_root)?;
+    copy_tree(&previous_root, &target_root)?;
+    let cleanup_failed_paths = cleanup_source_tree(&previous_root);
+    Ok(DataRootMigrationPayload {
+        previous_data_root: display_path(&previous_root),
+        target_data_root: display_path(&target_root),
+        file_count,
+        total_bytes,
+        cleanup_failed_paths,
+        paths: app_paths_payload_for_root(&target_root)?,
     })
 }
 
