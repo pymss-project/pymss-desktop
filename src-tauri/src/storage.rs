@@ -176,6 +176,19 @@ fn collect_tree_stats(path: &Path) -> AppResult<(usize, u64)> {
     Ok((file_count, total_bytes))
 }
 
+fn dir_has_entries(path: &Path) -> AppResult<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    if !path.is_dir() {
+        return Err(AppError::Worker(format!(
+            "portable data target is not a directory: {}",
+            path.display()
+        )));
+    }
+    Ok(std::fs::read_dir(path)?.next().is_some())
+}
+
 fn copy_tree(source: &Path, target: &Path) -> AppResult<()> {
     std::fs::create_dir_all(target)?;
     for entry in std::fs::read_dir(source)? {
@@ -275,6 +288,12 @@ pub fn migrate_data_root_to_portable(app: &AppHandle) -> AppResult<DataRootMigra
         return Err(AppError::Worker(format!(
             "data root is not a directory: {}",
             previous_root.display()
+        )));
+    }
+    if dir_has_entries(&target_root)? {
+        return Err(AppError::Worker(format!(
+            "portable data target is not empty: {}",
+            target_root.display()
         )));
     }
 

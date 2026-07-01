@@ -415,8 +415,8 @@ export const useSettingsStore = defineStore('settings', () => {
   function refreshPathsAfterDataRootMigration(payload: DataRootMigrationPayload) {
     const previousRoot = displayModelDirPath(payload.previousDataRoot)
     const nextPaths = payload.paths
-    const shouldMoveModelDir = modelDir.value && isPathUnderRoot(modelDir.value, previousRoot)
-    const shouldMoveOutputDir = outputDir.value && isPathUnderRoot(outputDir.value, previousRoot)
+    const shouldMoveModelDir = Boolean(modelDir.value) && isPathUnderRoot(modelDir.value, previousRoot)
+    const shouldMoveOutputDir = Boolean(outputDir.value) && isPathUnderRoot(outputDir.value, previousRoot)
     appPaths.value = nextPaths
     if (shouldMoveModelDir) modelDir.value = nextPaths.modelsDir
     if (shouldMoveOutputDir) outputDir.value = nextPaths.outputsDir
